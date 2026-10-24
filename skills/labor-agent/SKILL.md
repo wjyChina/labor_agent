@@ -63,7 +63,7 @@ description: 与 Labor Agent/labor_agent 协作时，仅委派适合的复杂代
 交付：报告每项标准的验证步骤、实际结果和必要证据，列出修改路径；未执行的检查标为未验证。
 ```
 
-默认以节省主模型用量为目标等待 Labor Agent。派发长任务时给 `agent_send` 传 `wait_ms: 55000`，尽量让它在一次调用中完成。若仍返回 `running`，调用 `agent_wait` 并传 `wait_ms: 55000`；它会在任务结束时立即返回，超时仍运行时返回 `running`，此时再按需等待。不要用 `session_get` 轮询或在等待时做无关的代码搜索、总结和进度转述。只有确实能并行缩短总工期、且与验收直接相关的准备才在等待期间进行。`agent_send` 返回 `running` 只表示任务未完成，**不要重复发送原任务**。
+派发任务后必须等到 Labor Agent 本轮进入终态，才能结束本轮协作或向用户报告结果。调用 `agent_send` 时传 `wait_ms: 55000`；若返回 `running`，立即调用专用等待工具。若工具列表提供 `agent_await`，调用 `agent_await(wait_ms: 55000)`；本项目当前 MCP 将该工具命名为 `agent_wait`，因此此环境调用 `agent_wait(wait_ms: 55000)`。等待工具超时后仍返回 `running` 时，继续调用它，直到状态变为 `idle`、`error` 或 `cancelled`。`agent_status` 只用于即时查看状态，不能代替等待；不要以超时、长时间执行或等待不便为由把任务留在后台并提前返回。等待期间不要做无关的代码搜索、总结和进度转述。`agent_send` 返回 `running` 只表示任务未完成，**不要重复发送原任务**。
 
 ## 默认先看结果，过程按需读取
 

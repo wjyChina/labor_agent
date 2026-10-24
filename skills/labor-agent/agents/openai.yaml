@@ -1,4 +1,4 @@
 interface:
   display_name: "Labor Agent 协作"
-  short_description: "规划后委派复杂实现与多步命令，界定工作及成果区域并验收；简单任务直接完成"
-  default_prompt: "使用 $labor-agent 先判断任务是否值得委派；适合时先给出详细规划、架构参考、工作及成果区域和验收标准，再交给 Labor Agent 执行并核验。"
+  short_description: "规划后委派复杂实现与多步命令，等待完成并验收；简单任务直接完成"
+  default_prompt: "使用 $labor-agent 判断任务是否值得委派；适合时先给出详细规划、架构参考、工作及成果区域和验收标准，派发后必须用 agent_await（当前 MCP 名为 agent_wait）等到任务进入终态，再核验交付。"
