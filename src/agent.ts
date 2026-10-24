@@ -3,6 +3,7 @@ import type { Config } from './config.js';
 import { AppError, Store, type Session, type Message } from './store.js';
 import { ResponsesProvider, ProviderError } from './provider.js';
 import { ToolExecutor, clip } from './tools.js';
+import { beijingDate, estimateDeepSeekFlash } from './pricing.js';
 
 export class Agent {
   readonly tools: ToolExecutor;
@@ -24,6 +25,24 @@ export class Agent {
       message.delivery = 'applied';
     }
     if (queued.length) this.store.save(s);
+  }
+  private recordUsage(s: Session, usage: any, at: Date) {
+    const input = Math.max(0, Number(usage?.input_tokens) || 0);
+    const output = Math.max(0, Number(usage?.output_tokens) || 0);
+    const cached = Math.min(input, Math.max(0, Number(usage?.input_tokens_details?.cached_tokens) || 0));
+    s.usage.input += input; s.usage.output += output; s.usage.cached += cached;
+    const estimate = estimateDeepSeekFlash({ baseUrl: this.config.baseUrl, model: this.config.model, at,
+      holiday: this.store.isHolidayOverride(beijingDate(at)), inputTokens: input, cachedTokens: cached, outputTokens: output });
+    if (!estimate) return;
+    const model = this.config.model.trim();
+    s.usage.estimatedCosts ||= {};
+    const cost = s.usage.estimatedCosts[model] ||= {
+      usd: 0, peakUsd: 0, offPeakUsd: 0, calls: 0, input: 0, cached: 0, output: 0, since: at.toISOString(),
+    };
+    cost.usd += estimate.usd;
+    cost[estimate.period === 'peak' ? 'peakUsd' : 'offPeakUsd'] += estimate.usd;
+    cost.calls++;
+    cost.input += input; cost.cached += cached; cost.output += output;
   }
   guide(s: Session, text: string, source: 'web' | 'mcp') {
     this.validateText(text);
@@ -91,26 +110,32 @@ Read relevant AGENTS.md instructions first. File tools are limited to the worksp
           if (Date.now() - lastNotify > 60) { this.store.emit('change', { sessionId: s.id }); lastNotify = Date.now(); }
         };
         const usePrevious = c.cacheMode === 'previous_response_id' && s.previousResponseId;
-        let response;
+        let response, requestedAt: Date;
+        const request = async (input: any[], previousId?: string) => {
+          const at = new Date();
+          try {
+            const response = await this.provider.create(input, instructions, previousId, signal, onDelta);
+            return { response, at };
+          } catch (e) {
+            if (e instanceof ProviderError && e.usage) this.recordUsage(s, e.usage, at);
+            throw e;
+          }
+        };
         try {
-          response = await this.provider.create(usePrevious ? s.history.slice(s.responseCursor || 0) : s.history,
-            instructions, usePrevious || undefined, signal, onDelta);
+          ({ response, at: requestedAt } = await request(usePrevious ? s.history.slice(s.responseCursor || 0) : s.history,
+            usePrevious || undefined));
         } catch (e) {
           if (usePrevious && e instanceof ProviderError && [400, 404].includes(e.status) && /previous_response|response.+(not found|expired|invalid)/i.test(e.message)) {
             s.previousResponseId = undefined; s.responseCursor = undefined;
             const interruptedMessage = pending as Message | undefined;
             if (interruptedMessage) { interruptedMessage.state = 'error'; pending = undefined; }
-            response = await this.provider.create(s.history, instructions, undefined, signal, onDelta);
+            ({ response, at: requestedAt } = await request(s.history));
           } else throw e;
         }
+        if (response.usage) this.recordUsage(s, response.usage, requestedAt);
         signal.throwIfAborted();
         s.history.push(...response.output);
         s.previousResponseId = response.id; s.responseCursor = s.history.length;
-        const usage = response.usage;
-        if (usage) {
-          s.usage.input += usage.input_tokens || 0; s.usage.output += usage.output_tokens || 0;
-          s.usage.cached += usage.input_tokens_details?.cached_tokens || 0;
-        }
         const text = response.output.filter(x => x.type === 'message').flatMap(x => x.content || [])
           .filter(x => x.type === 'output_text' || x.type === 'refusal').map(x => x.text || x.refusal || '').join('\n');
         const streamedMessage = pending as Message | undefined;

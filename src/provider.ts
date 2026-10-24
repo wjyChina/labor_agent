@@ -4,7 +4,7 @@ import { toolDefinitions } from './tools.js';
 
 export type ModelResponse = { id?: string; status?: string; output: ApiItem[]; usage?: any; error?: any; incomplete_details?: any };
 export class ProviderError extends Error {
-  constructor(message: string, public status = 502) { super(message); }
+  constructor(message: string, public status = 502, public usage?: any) { super(message); }
 }
 export class ResponsesProvider {
   constructor(private config: Config) {}
@@ -59,7 +59,7 @@ export class ResponsesProvider {
     }
     if (!final || !Array.isArray(final.output)) throw new ProviderError('模型流提前断开，没有收到完整 response。请重试。');
     if (final.status && final.status !== 'completed')
-      throw new ProviderError(`模型未完成：${final.error?.message || final.incomplete_details?.reason || final.status}`);
+      throw new ProviderError(`模型未完成：${final.error?.message || final.incomplete_details?.reason || final.status}`, 502, final.usage);
     return final;
   }
 }
