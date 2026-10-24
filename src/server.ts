@@ -7,6 +7,7 @@ import { loadConfig } from './config.js';
 import { Store, AppError } from './store.js';
 import { Agent } from './agent.js';
 import { HolidayCalendar } from './holiday-calendar.js';
+import { ExchangeRateCache } from './exchange-rate.js';
 import { beijingDate } from './pricing.js';
 import { baseUrl, serviceId, mcpToken } from './service.js';
 
@@ -42,6 +43,8 @@ process.once('exit', releaseLock);
 const store = new Store(config.dataDir);
 const holidayCalendar = new HolidayCalendar(config.dataDir, () =>
   store.emit('change', { sessionId: store.activeSessionId || undefined }));
+const exchangeRate = new ExchangeRateCache(config.dataDir, () =>
+  store.emit('change', { sessionId: store.activeSessionId || undefined }));
 const agent = new Agent(config, store, holidayCalendar);
 const sessionCreationToken = mcpToken(config);
 const app = express(); app.disable('x-powered-by');
@@ -68,7 +71,8 @@ const status = () => {
     workspace: config.workspace, cacheMode: config.cacheMode, bashPath: agent.tools.bashPath,
     activeSessionId: store.activeSessionId, running: store.list().filter(s => s.status === 'running').length,
     holidayCalendar: { ...calendar, automaticHoliday: calendar.isHoliday, manualOverride,
-      isHoliday: calendar.isHoliday || manualOverride } };
+      isHoliday: calendar.isHoliday || manualOverride },
+    usdCnyRate: exchangeRate.get() };
 };
 app.get('/api/health', (_req, res) => { res.json(status()); });
 app.get('/api/state', (_req, res) => { res.json({ ...status(), sessions: store.list(),
@@ -170,6 +174,7 @@ const server = app.listen(config.port, '127.0.0.1', () => {
   console.log(`Labor Agent: ${origin}\nWorkspace: ${config.workspace}\nModel: ${config.model}\nAPI key: ${config.apiKey ? 'configured' : 'not configured'}`);
 });
 holidayCalendar.start();
+exchangeRate.start();
 server.on('error', error => { console.error(error.message); process.exit(1); });
 let stopping = false;
 async function stop() {

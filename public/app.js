@@ -9,16 +9,21 @@ async function api(url, body) {
 }
 const time = value => new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 function formatUsd(value) { return `USD $${Number(value || 0).toFixed(6)}`; }
+function formatCny(usd, fx = state?.usdCnyRate) {
+  if (!fx || !Number.isFinite(fx.rate)) return null;
+  const cny = Number(usd || 0) * fx.rate;
+  return `¥${new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(cny)}`;
+}
 function cacheHitRate(usage = {}) {
   const input = Math.max(0, Number(usage.input) || 0);
   const cached = Math.min(input, Math.max(0, Number(usage.cached) || 0));
   return input > 0 ? `${(cached / input * 100).toFixed(1)}%` : '—';
 }
-function costSummary(usage = {}) {
+function costSummary(usage = {}, fx = state?.usdCnyRate) {
   const entries = Object.entries(usage.estimatedCosts || {});
   const hasUsage = (usage.input || 0) + (usage.output || 0) > 0;
   if (!entries.length) return {
-    label: hasUsage ? '费用暂无估算' : `估算 ${formatUsd(0)}`,
+    label: hasUsage ? '费用暂无估算' : `费用估算 ${formatCny(0, fx) || '汇率加载中'}`,
     title: hasUsage
       ? '该会话已有 token 用量，但没有模型调用时段的计价记录，无法准确回溯。当前只对 DeepSeek Flash 估算，新请求会开始记录费用。'
       : '当前 session 还没有产生模型 token 用量。',
@@ -28,11 +33,16 @@ function costSummary(usage = {}) {
   const meteredOutput = entries.reduce((sum, [, cost]) => sum + cost.output, 0);
   const meteredCached = entries.reduce((sum, [, cost]) => sum + cost.cached, 0);
   const partial = meteredInput < (usage.input || 0) || meteredOutput < (usage.output || 0) || meteredCached < (usage.cached || 0);
+  if (!fx || !Number.isFinite(fx.rate)) return {
+    label: '人民币折算待获取',
+    title: `当前 USD 估算合计 ${formatUsd(total)}，汇率尚未加载，暂不能显示人民币金额。`,
+  };
   const details = entries.map(([model, cost]) =>
-    `${model}: ${formatUsd(cost.usd)}，高峰 ${formatUsd(cost.peakUsd)}，低谷 ${formatUsd(cost.offPeakUsd)}；${cost.calls} 次调用；输入 ${cost.input.toLocaleString()}（缓存命中 ${cost.cached.toLocaleString()}），输出 ${cost.output.toLocaleString()} tokens；从 ${new Date(cost.since).toLocaleString('zh-CN')} 起记录。`);
+    `${model}: ${formatCny(cost.usd, fx)}（${formatUsd(cost.usd)}），高峰 ${formatCny(cost.peakUsd, fx)}，低谷 ${formatCny(cost.offPeakUsd, fx)}；${cost.calls} 次调用；输入 ${cost.input.toLocaleString()}（缓存命中 ${cost.cached.toLocaleString()}），输出 ${cost.output.toLocaleString()} tokens；从 ${new Date(cost.since).toLocaleString('zh-CN')} 起记录。`);
+  details.unshift(`按 ${fx.date} USD/CNY 中间价 1 USD = ${fx.rate} CNY 折算；整个 session 使用当前汇率，汇率更新后人民币显示会相应变化。来源：Frankfurter。`);
   details.unshift('按 DeepSeek Flash 官方峰谷单价估算；缓存命中是输入 token 的子集。');
   if (partial) details.push('部分历史用量没有计价记录，未计入估算。');
-  return { label: `${partial ? '部分估算' : '费用估算'} ${formatUsd(total)}`, title: details.join('\n') };
+  return { label: `${partial ? '部分估算' : '费用估算'} ${formatCny(total, fx)}`, title: `${details.join('\n')}\n美元原始估算：${formatUsd(total)}` };
 }
 const holidayOverrideStorageKey = 'labor-agent.deepseek-holiday-date';
 function beijingClock(now = new Date()) {
