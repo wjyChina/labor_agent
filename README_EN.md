@@ -16,7 +16,7 @@ Let an execution agent handle implementation while the primary AI plans and veri
 - A shared backend for stdio MCP and the browser UI, with persistent sessions and a workspace per session.
 - AI-created/selected sessions; the browser supports observation, conversation, steering and cancellation, with no session creation button.
 - Mid-task guidance and cancellation of requests and Bash process trees; no fixed 40-model-call limit in the current implementation.
-- Responses API, full local history replay and cache-hit reporting; configurable API key, URL and model.
+- Responses API, full local history replay, and per-session cache-hit counts and rates; configurable API key, URL and model.
 - Per-session USD cost estimates for DeepSeek Flash, split by the peak/off-peak rate at each request; cache hits are priced as a subset of input tokens. Other models and legacy usage without period data are not estimated. Chinese public holidays must be marked manually in the UI.
 - On first use, the skill and MCP instructions ask browser-capable clients to open or reuse the UI. **The client performs the opening action.** Headless/plain MCP clients receive a URL; polling does not open additional tabs.
 
