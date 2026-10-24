@@ -24,6 +24,15 @@
     </header>
     <div class="notice hidden" id="notice" role="status"></div>
     <div class="contextbar"><span>⌘</span><span id="workspace">等待连接</span></div>
+    <aside class="peak-notice hidden" id="peak-notice" role="status" aria-live="polite">
+      <span class="peak-mark" aria-hidden="true"></span>
+      <div class="peak-copy">
+        <div class="peak-heading"><strong id="peak-title"></strong><span id="peak-time">北京时间</span></div>
+        <div class="peak-detail" id="peak-detail"></div>
+      </div>
+      <label class="holiday-override" for="holiday-override"><input type="checkbox" id="holiday-override">今天是法定节假日</label>
+      <a class="peak-link" href="https://api-docs.deepseek.com/zh-cn/quick_start/pricing/" target="_blank" rel="noopener noreferrer">价格规则 ↗</a>
+    </aside>
     <section class="conversation" id="conversation" aria-label="会话内容" aria-live="polite">
       <div id="messages"></div>
     </section>

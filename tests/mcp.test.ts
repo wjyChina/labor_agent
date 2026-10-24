@@ -39,7 +39,8 @@ test('MCP auto-starts backend and shares sessions/transcripts with HTTP UI, reje
   };
   try {
     await client.connect(transport);
-    const list = await client.listTools(); assert.equal(list.tools.length, 8);
+    const list = await client.listTools(); assert.equal(list.tools.length, 9);
+    assert.ok(list.tools.some(tool => tool.name === 'agent_wait'));
     const start = await tool('agent_start'); pid = start.pid; assert.equal(start.configured, true);
     const a = await tool('session_create', { title: 'MCP 测试' });
     const b = await tool('session_create', { title: '第二会话' });
