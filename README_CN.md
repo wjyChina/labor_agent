@@ -17,7 +17,7 @@
 - AI 创建/选择会话；网页可观察、对话、引导和停止，无新建会话按钮。
 - 支持执行中引导、停止请求及 Bash 进程树；当前没有固定40次模型调用上限。
 - Responses API、本地完整历史续传、缓存命中量展示；支持可配置 API Key、URL 和模型。
-- 首次协作时，skill 和 MCP 指令要求支持浏览器的客户端自动打开或复用网页。**打开动作由客户端完成**；纯 MCP/无浏览器客户端只获得地址，状态查询不会反复开页。
+- Labor Agent 服务启动时自动打开默认浏览器。AI 与 Labor Agent 的日常协作使用 MCP 工具，不由 AI 打开或操作网页；用户仍可直接在网页中查看和手动操作。
 
 ## 部署
 
@@ -48,7 +48,7 @@ npm run build
 npm run start:bg
 ```
 
-网页默认位于 **http://127.0.0.1:3210/**。`npm start` 为前台启动；修改 `.env` 后运行 `npm run restart`。其他命令：`npm run status`、`npm run stop`。日志和会话默认位于 `.labor-agent/`。
+网页默认位于 **http://127.0.0.1:3210/**，服务启动后会自动打开默认浏览器；无图形界面时可手动访问该地址。`npm start` 为前台启动；修改 `.env` 后运行 `npm run restart`。其他命令：`npm run status`、`npm run stop`。日志和会话默认位于 `.labor-agent/`。
 
 macOS/Linux 可用 `test -f .env || cp .env.example .env` 代替上面的复制命令，其余 npm 命令相同。
 
@@ -86,7 +86,7 @@ npm run setup:skill
 
 主 AI 先规划目标、架构、工作/成果区域及验收标准，再通过 `agent_send` 派发。默认先看最终答复和报告；必要时先查最新任务轮的最近过程，再逐步展开，最后核验真实产物。相关工作沿用会话，不相关任务新建会话。
 
-MCP 入口：`agent_start`、`session_create/list/select/get`、`agent_send/status/wait/cancel`。AI 连接后打开/复用网页，选择目标会话；网页会显示指令、反馈和工具记录。
+MCP 入口：`agent_start`、`session_create/list/select/get`、`agent_send/status/wait/cancel`。AI 通过 MCP 选择会话、派发任务、等待和读取结果；服务启动时自动打开网页，网页也会显示指令、反馈和工具记录。
 
 `session_get` 默认只给工具结果和参数的短预览，并限制返回字符数。需要查看具体结果时，将预览中的消息 `id` 传入 `message_ids` 获取完整文本；如 `textTruncated` 为 `true`，可增大 `max_chars`。也可用 `roles` 按角色筛选，或通过 `before_message_id` 向前分页。完整工具参数需显式传 `include_tool_args: true`。`agent_send` 和 `agent_status` 返回的工具记录同样使用短预览。
 

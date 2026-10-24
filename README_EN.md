@@ -17,7 +17,7 @@ Let an execution agent handle implementation while the primary AI plans and veri
 - AI-created/selected sessions; the browser supports observation, conversation, steering and cancellation, with no session creation button.
 - Mid-task guidance and cancellation of requests and Bash process trees; no fixed 40-model-call limit in the current implementation.
 - Responses API, full local history replay and cache-hit reporting; configurable API key, URL and model.
-- On first use, the skill and MCP instructions ask browser-capable clients to open or reuse the UI. **The client performs the opening action.** Headless/plain MCP clients receive a URL; polling does not open additional tabs.
+- The service opens the default browser when it starts. AI agents use MCP tools for ordinary collaboration and do not open or operate the UI; users can still inspect and operate the page directly.
 
 ## Deployment
 
@@ -48,7 +48,7 @@ npm run build
 npm run start:bg
 ```
 
-The default UI is **http://127.0.0.1:3210/**. Use `npm start` for foreground execution, and `npm run restart` after editing `.env`. Management commands: `npm run status` and `npm run stop`. Logs and sessions default to `.labor-agent/`.
+The default UI is **http://127.0.0.1:3210/**. The service opens the default browser on startup; in headless environments, visit this URL manually. Use `npm start` for foreground execution, and `npm run restart` after editing `.env`. Management commands: `npm run status` and `npm run stop`. Logs and sessions default to `.labor-agent/`.
 
 On macOS/Linux, replace the copy command with `test -f .env || cp .env.example .env`; the npm commands are the same.
 
@@ -86,7 +86,7 @@ Once MCP and the skill are loaded, ask:
 
 The primary AI defines the goal, architecture, workspace, deliverable paths and acceptance criteria, then dispatches through `agent_send`. It reads the final answer and reports first. When process inspection is needed, it starts with recent records from the latest task turn, expands only as needed, and verifies the actual artifacts. Reuse sessions for related work; create a new one for unrelated tasks.
 
-MCP tools: `agent_start`, `session_create/list/select/get`, and `agent_send/status/wait/cancel`. The AI opens/reuses the UI and selects the intended session; instructions, replies and tool activity appear there.
+MCP tools: `agent_start`, `session_create/list/select/get`, and `agent_send/status/wait/cancel`. The AI creates/selects sessions, sends tasks, waits and reads results through MCP; the service opens the UI on startup, where instructions, replies and tool activity are also visible.
 
 `session_get` returns recent messages with short tool-output and argument previews, bounded by a character budget. To inspect a specific result, pass its message `id` in `message_ids` to fetch the full text; increase `max_chars` when `textTruncated` is true. Filter with `roles` or page backward with `before_message_id`. Full tool arguments require `include_tool_args: true`. `agent_send` and `agent_status` also return compact tool previews.
 
