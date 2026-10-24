@@ -1,0 +1,15 @@
+# Dependencies and generated build output
+node_modules/
+dist/
+
+# Local environment files; keep the empty configuration template
+.env
+.env.*
+*.env
+!.env.example
+
+# Local MCP configuration, sessions, logs and credentials
+.codex/
+.labor-agent/
+coverage/
+*.log

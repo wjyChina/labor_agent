@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light"><title>Labor Agent · 工作台</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="/" aria-label="Labor Agent 首页"><span class="logo">L</span><span>Labor Agent</span></a>
+    <div class="section-label">会话记录 <span id="session-count">0</span></div>
+    <nav id="sessions" aria-label="会话列表"></nav>
+    <div class="sidebar-bottom">
+      <div class="engine-line"><span class="live-dot" id="engine-dot"></span><span id="model">正在连接…</span></div>
+      <button class="settings-button" id="settings">⚙ <span>设置</span></button>
+    </div>
+  </aside>
+  <main>
+    <header class="topbar">
+      <button class="icon-button mobile-menu" id="mobile-menu" aria-label="展开会话列表">☰</button>
+      <div class="breadcrumb"><span id="session-title">未选择会话</span></div>
+      <div class="topbar-right"><span class="connection" id="connection">连接中</span><span class="status" id="status">待命</span></div>
+    </header>
+    <div class="notice hidden" id="notice" role="status"></div>
+    <div class="contextbar"><span>⌘</span><span id="workspace">等待连接</span></div>
+    <section class="conversation" id="conversation" aria-label="会话内容" aria-live="polite">
+      <div id="messages"></div>
+    </section>
+    <div class="composer-area">
+      <div class="run-caption hidden" id="run-caption"></div>
+      <form class="composer" id="composer">
+        <label class="sr-only" for="prompt">发送给 Labor Agent 的指令</label>
+        <textarea id="prompt" rows="2" placeholder="发送消息…" maxlength="100000"></textarea>
+        <div class="composer-bottom"><span class="input-hint">Enter 发送 <span>·</span> Shift + Enter 换行</span><button class="stop-button hidden" id="stop" type="button" title="立即中断当前执行">停止</button><button class="send-button" id="send" type="submit">发送 <span>↑</span></button></div>
+      </form>
+      <div class="footer"><span id="usage"></span></div>
+    </div>
+  </main>
+  <dialog id="settings-dialog">
+    <div class="dialog-eyebrow">CONNECTION</div><h2>连接与配置</h2><p>在项目根目录的 <code>.env</code> 中配置 API，修改后重启服务。</p>
+    <dl id="settings-info"></dl><pre class="config-example">LABOR_API_KEY=你的 DeepSeek API Key
+LABOR_BASE_URL=https://api.deepseek.com
+LABOR_MODEL=deepseek-flash
+LABOR_CACHE_MODE=local</pre>
+    <p class="settings-note">DeepSeek 使用本地历史续传 Responses API；支持服务端会话的网关可配置 previous_response_id。Bash 以当前系统用户的权限执行命令。</p>
+    <div class="dialog-actions"><button class="primary" type="button" data-close="settings-dialog">知道了</button></div>
+  </dialog>
+  <div class="toast hidden" id="toast" role="alert"></div>
+</body>
+</html>
