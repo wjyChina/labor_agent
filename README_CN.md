@@ -86,7 +86,11 @@ npm run setup:skill
 
 主 AI 先规划目标、架构、工作/成果区域及验收标准，再通过 `agent_send` 派发。默认先看最终答复和报告；必要时先查最新任务轮的最近过程，再逐步展开，最后核验真实产物。相关工作沿用会话，不相关任务新建会话。
 
-MCP 入口：`agent_start`、`session_create/list/select/get`、`agent_send/status/cancel`。AI 连接后打开/复用网页，选择目标会话；网页会显示指令、反馈和工具记录。
+MCP 入口：`agent_start`、`session_create/list/select/get`、`agent_send/status/wait/cancel`。AI 连接后打开/复用网页，选择目标会话；网页会显示指令、反馈和工具记录。
+
+`session_get` 默认只给工具结果和参数的短预览，并限制返回字符数。需要查看具体结果时，将预览中的消息 `id` 传入 `message_ids` 获取完整文本；如 `textTruncated` 为 `true`，可增大 `max_chars`。也可用 `roles` 按角色筛选，或通过 `before_message_id` 向前分页。完整工具参数需显式传 `include_tool_args: true`。`agent_send` 和 `agent_status` 返回的工具记录同样使用短预览。
+
+为减少主 AI 的轮询开销，长任务派发时给 `agent_send` 传 `wait_ms: 55000`；若仍返回 `running`，用 `agent_wait(wait_ms: 55000)`。它监听会话状态变化，在结束、报错或取消时提前返回。不要用 `agent_send` 发送“继续/等待”来轮询，因为运行中的发送会变成任务引导。
 
 ## 运行边界与开发
 

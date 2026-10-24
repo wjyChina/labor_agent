@@ -56,7 +56,7 @@ npm run stop
 | `LABOR_DATA_DIR` | `.labor-agent` | 会话文件、当前选择、服务锁及日志 |
 | `LABOR_PORT` | `3210` | 本地网页 / 内部 HTTP API 端口 |
 | `LABOR_BASH_PATH` | 自动检测 | Bash 可执行文件路径 |
-| `LABOR_MAX_OUTPUT_TOKENS` | `8192` | 每次模型响应的输出上限（包含推理） |
+| `LABOR_MAX_OUTPUT_TOKENS` | `32768` | 每次模型响应的输出上限（包含推理） |
 | `LABOR_REQUEST_TIMEOUT_MS` | `180000` | 单次 API 请求超时，毫秒 |
 
 `.env` 从本项目根目录读取，与 MCP 客户端当前目录无关。相对路径也以本项目根目录解析；创建会话时提供的相对目录以默认工作目录解析。进程环境变量优先于 `.env`。修改 API、模型或端口需要重启服务；修改端口或数据目录后还需要重新加载 MCP 客户端。不会自动读取 Harness 的密钥。
@@ -89,9 +89,10 @@ npm run setup:mcp
 | `session_create` | 创建并选择会话，可传 `title`、`workspace` |
 | `session_list` | 列出会话和当前选择 |
 | `session_select` | 用 `session_id` 切换当前会话，界面同步切换 |
-| `session_get` | 读取对话和工具记录，默认最后 30 条，可传 `limit`（最多 200） |
+| `session_get` | 读取对话和工具记录；工具结果默认只给摘要，可按角色过滤、向前分页，或按消息 ID 读取完整内容 |
 | `agent_send` | 传 `text` 对话；空闲时启动一轮，执行中自动作为引导。可传 `session_id`、`wait_ms`（0–55000，默认 1000；引导立即确认） |
-| `agent_status` | 查询执行状态和最近记录，可等待 0–10000ms 后查询 |
+| `agent_status` | 立即查询执行状态和最近记录；可选 `wait_ms` |
+| `agent_wait` | 等待会话结束或超时；状态变化时提前返回，最长 55 秒 |
 | `agent_cancel` | 中止指定/当前会话的请求与 Bash 进程树 |
 
 典型调用顺序：
@@ -99,12 +100,16 @@ npm run setup:mcp
 ```text
 agent_start {}
 session_create {"title":"项目巡检","workspace":"D:/codes/your-project"}
-agent_send {"text":"读取项目说明并检查启动方式。","wait_ms":1000}
-agent_status {"wait_ms":3000}
+agent_send {"text":"读取项目说明并检查启动方式。","wait_ms":55000}
+agent_wait {"wait_ms":55000}
 session_get {"limit":30}
 ```
 
-工具未传 `session_id` 时使用当前选中的会话。长任务返回 `running` 后会继续执行，通过 `agent_status` 查询；不要为了轮询重复 `agent_send`，运行中再次发送的文本会成为当前任务的引导。空闲时发送才启动新一轮。同一会话同时只运行一轮，不同会话可独立运行。读写同一个工作目录时，应避免给不同会话下发冲突的任务。
+`session_get` 默认返回最近 30 条消息；工具结果与工具参数仅提供短预览，并受总字符预算限制。需要核对某条结果时，把返回的消息 `id` 传入 `message_ids`，即可读取指定消息的完整文本；若返回 `textTruncated: true`，可增大 `max_chars`。`roles` 用于筛选 `user`、`assistant`、`tool`、`system`，`before_message_id` 用于向前分页。读取完整工具参数需显式设置 `include_tool_args: true`。
+
+为减少主 AI 的轮询开销，长任务派发时可给 `agent_send` 设置 `wait_ms: 55000`；若仍在运行，使用 `agent_wait(wait_ms: 55000)`。等待工具会监听会话状态变化，结束、报错或取消时立即返回，超时仍运行时才返回。不要用 `agent_send` 发送“继续/等待”来轮询，因为运行中的发送会成为任务引导。
+
+工具未传 `session_id` 时使用当前选中的会话。长任务返回 `running` 后会继续执行，通过 `agent_wait` 等它结束；`agent_status` 用于立即查看状态。不要为了轮询重复 `agent_send`，运行中再次发送的文本会成为当前任务的引导。空闲时发送才启动新一轮。同一会话同时只运行一轮，不同会话可独立运行。读写同一个工作目录时，应避免给不同会话下发冲突的任务。
 
 ### 执行中的引导
 

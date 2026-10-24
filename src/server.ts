@@ -64,6 +64,40 @@ app.get('/api/state', (_req, res) => { res.json({ ...status(), sessions: store.l
   session: store.activeSessionId ? store.view(store.get()) : null }); });
 app.get('/api/sessions', (_req, res) => { res.json({ activeSessionId: store.activeSessionId, sessions: store.list() }); });
 app.get('/api/sessions/:id', (req, res) => { res.json(store.view(store.get(req.params.id))); });
+app.get('/api/sessions/:id/wait', async (req, res) => {
+  const { wait_ms } = z.object({ wait_ms: z.coerce.number().int().min(0).max(55000).default(0) })
+    .parse({ wait_ms: req.query.wait_ms });
+  const id = req.params.id;
+  const startedAt = Date.now();
+  const session = store.get(id);
+  let waitResult: 'terminal' | 'timeout' | 'not_running' | 'disconnected' = 'not_running';
+  if (session.status === 'running' && wait_ms > 0) {
+    waitResult = await new Promise<'terminal' | 'timeout' | 'disconnected'>(resolve => {
+      let settled = false;
+      let timer: NodeJS.Timeout | undefined;
+      const cleanup = () => {
+        clearTimeout(timer);
+        store.off('change', onChange);
+        res.off('close', onClose);
+      };
+      const finish = (result: 'terminal' | 'timeout' | 'disconnected') => {
+        if (settled) return;
+        settled = true; cleanup(); resolve(result);
+      };
+      const onChange = (event: { sessionId?: string }) => {
+        if (event.sessionId === id && store.get(id).status !== 'running') finish('terminal');
+      };
+      const onClose = () => finish('disconnected');
+      store.on('change', onChange);
+      res.once('close', onClose);
+      timer = setTimeout(() => finish('timeout'), wait_ms);
+      // Close the small race between the initial status check and event subscription.
+      if (store.get(id).status !== 'running') finish('terminal');
+    });
+    if (res.destroyed || waitResult === 'disconnected') return;
+  }
+  res.json({ ...store.view(store.get(id)), waitResult, waitedMs: Date.now() - startedAt });
+});
 app.post('/api/sessions', (req, res) => {
   if (req.headers['x-labor-mcp-token'] !== sessionCreationToken)
     return res.status(403).json({ error: '会话只能由 AI 通过 MCP 创建。' });

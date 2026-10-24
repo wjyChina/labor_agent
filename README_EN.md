@@ -86,7 +86,11 @@ Once MCP and the skill are loaded, ask:
 
 The primary AI defines the goal, architecture, workspace, deliverable paths and acceptance criteria, then dispatches through `agent_send`. It reads the final answer and reports first. When process inspection is needed, it starts with recent records from the latest task turn, expands only as needed, and verifies the actual artifacts. Reuse sessions for related work; create a new one for unrelated tasks.
 
-MCP tools: `agent_start`, `session_create/list/select/get`, and `agent_send/status/cancel`. The AI opens/reuses the UI and selects the intended session; instructions, replies and tool activity appear there.
+MCP tools: `agent_start`, `session_create/list/select/get`, and `agent_send/status/wait/cancel`. The AI opens/reuses the UI and selects the intended session; instructions, replies and tool activity appear there.
+
+`session_get` returns recent messages with short tool-output and argument previews, bounded by a character budget. To inspect a specific result, pass its message `id` in `message_ids` to fetch the full text; increase `max_chars` when `textTruncated` is true. Filter with `roles` or page backward with `before_message_id`. Full tool arguments require `include_tool_args: true`. `agent_send` and `agent_status` also return compact tool previews.
+
+To reduce primary-model polling, set `agent_send.wait_ms` to `55000` for long tasks. If the task is still running, call `agent_wait(wait_ms: 55000)`. It listens for the session state change and returns immediately when the run ends, errors or is cancelled. Do not send “continue” or “wait” through `agent_send`: while a task is running, that call queues guidance.
 
 ## Execution boundaries and development
 

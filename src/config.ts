@@ -14,7 +14,7 @@ const schema = z.object({
   LABOR_MODEL: z.string().min(1).default('deepseek-flash'),
   LABOR_CACHE_MODE: z.enum(['local', 'previous_response_id']).default('local'),
   LABOR_REASONING_EFFORT: z.enum(['none', 'low', 'high', 'max']).default('high'),
-  LABOR_MAX_OUTPUT_TOKENS: integer(8192, 256, 131072),
+  LABOR_MAX_OUTPUT_TOKENS: integer(32768, 256, 131072),
   LABOR_REQUEST_TIMEOUT_MS: integer(180000, 1000, 1800000),
   LABOR_WORKSPACE: z.string().default('.'),
   LABOR_DATA_DIR: z.string().default('.labor-agent'),
