@@ -62,6 +62,11 @@ const status = () => ({ app: 'labor-agent', version: '0.1.0', serviceId: service
 app.get('/api/health', (_req, res) => { res.json(status()); });
 app.get('/api/state', (_req, res) => { res.json({ ...status(), sessions: store.list(),
   session: store.activeSessionId ? store.view(store.get()) : null }); });
+app.post('/api/pricing/holiday-override', (req, res) => {
+  const { date, isHoliday } = z.object({ date: z.string().date(), isHoliday: z.boolean() }).parse(req.body);
+  store.setHolidayOverride(date, isHoliday);
+  res.json({ ok: true });
+});
 app.get('/api/sessions', (_req, res) => { res.json({ activeSessionId: store.activeSessionId, sessions: store.list() }); });
 app.get('/api/sessions/:id', (req, res) => { res.json(store.view(store.get(req.params.id))); });
 app.get('/api/sessions/:id/wait', async (req, res) => {

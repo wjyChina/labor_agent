@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-let state = null, connected = false, sending = false, refreshTimer, toastTimer, rendered = '', sidebarRendered = '';
+let state = null, connected = false, sending = false, refreshTimer, toastTimer, rendered = '', sidebarRendered = '', syncedHolidayOverrideKey = '', lastHolidaySyncKey = '', lastHolidaySyncAt = 0, holidaySyncQueue = Promise.resolve();
 const labels = { idle: '待命', running: '执行中', error: '执行异常', cancelled: '已停止' };
 function node(tag, className, text) { const n = document.createElement(tag); if (className) n.className = className; if (text !== undefined) n.textContent = text; return n; }
 function toast(text) { $('toast').textContent = text; $('toast').classList.remove('hidden'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.add('hidden'), 6000); }
@@ -8,6 +8,27 @@ async function api(url, body) {
   const result = await response.json(); if (!response.ok) throw new Error(result.error || '请求失败'); return result;
 }
 const time = value => new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+function formatUsd(value) { return `USD $${Number(value || 0).toFixed(6)}`; }
+function costSummary(usage = {}) {
+  const entries = Object.entries(usage.estimatedCosts || {});
+  const hasUsage = (usage.input || 0) + (usage.output || 0) > 0;
+  if (!entries.length) return {
+    label: hasUsage ? '费用暂无估算' : `估算 ${formatUsd(0)}`,
+    title: hasUsage
+      ? '该会话已有 token 用量，但没有模型调用时段的计价记录，无法准确回溯。当前只对 DeepSeek Flash 估算，新请求会开始记录费用。'
+      : '当前 session 还没有产生模型 token 用量。',
+  };
+  const total = entries.reduce((sum, [, cost]) => sum + cost.usd, 0);
+  const meteredInput = entries.reduce((sum, [, cost]) => sum + cost.input, 0);
+  const meteredOutput = entries.reduce((sum, [, cost]) => sum + cost.output, 0);
+  const meteredCached = entries.reduce((sum, [, cost]) => sum + cost.cached, 0);
+  const partial = meteredInput < (usage.input || 0) || meteredOutput < (usage.output || 0) || meteredCached < (usage.cached || 0);
+  const details = entries.map(([model, cost]) =>
+    `${model}: ${formatUsd(cost.usd)}，高峰 ${formatUsd(cost.peakUsd)}，低谷 ${formatUsd(cost.offPeakUsd)}；${cost.calls} 次调用；输入 ${cost.input.toLocaleString()}（缓存命中 ${cost.cached.toLocaleString()}），输出 ${cost.output.toLocaleString()} tokens；从 ${new Date(cost.since).toLocaleString('zh-CN')} 起记录。`);
+  details.unshift('按 DeepSeek Flash 官方峰谷单价估算；缓存命中是输入 token 的子集。');
+  if (partial) details.push('部分历史用量没有计价记录，未计入估算。');
+  return { label: `${partial ? '部分估算' : '费用估算'} ${formatUsd(total)}`, title: details.join('\n') };
+}
 const holidayOverrideStorageKey = 'labor-agent.deepseek-holiday-date';
 function beijingClock(now = new Date()) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
@@ -39,6 +60,17 @@ function updatePeakNotice() {
     ? '工作日 09:00–12:00、14:00–18:00；低谷价格约为高峰的一半。页面不自动识别法定节假日，遇节假日请勾选上方选项。'
     : holiday ? '法定节假日全天按低谷计，价格约为高峰的一半。'
       : '工作日 09:00–12:00、14:00–18:00 为高峰；其余时段为低谷。法定节假日需手动勾选，全天按低谷计。';
+}
+async function syncHolidayOverride(force = false) {
+  if (!state) return;
+  let holiday = false;
+  try { holiday = localStorage.getItem(holidayOverrideStorageKey) === beijingClock().date; } catch {}
+  const date = beijingClock().date, key = `${date}:${holiday}`;
+  if (syncedHolidayOverrideKey === key || (!force && lastHolidaySyncKey === key && Date.now() - lastHolidaySyncAt < 30000)) return;
+  lastHolidaySyncKey = key; lastHolidaySyncAt = Date.now();
+  const request = holidaySyncQueue.then(() => api('/api/pricing/holiday-override', { date, isHoliday: holiday }));
+  holidaySyncQueue = request.catch(() => {});
+  try { await request; syncedHolidayOverrideKey = key; } catch {}
 }
 function content(text) {
   const container = node('div', 'text');
@@ -88,7 +120,11 @@ function render() {
   $('send').disabled = sending || !connected || !state.configured || !s;
   $('prompt').disabled = sending || !s;
   $('prompt').placeholder = !s ? '等待 AI 创建会话' : running ? '补充要求或调整方向…' : '发送消息…';
-  $('usage').textContent = s ? `输入 ${s.usage.input.toLocaleString()} · 输出 ${s.usage.output.toLocaleString()} · 缓存 ${s.usage.cached.toLocaleString()} tokens` : '';
+  if (s) {
+    const cost = costSummary(s.usage);
+    $('usage').textContent = `输入 ${s.usage.input.toLocaleString()} · 输出 ${s.usage.output.toLocaleString()} · 缓存命中 ${s.usage.cached.toLocaleString()}（包含在输入中）tokens · ${cost.label}`;
+    $('usage').title = cost.title;
+  } else { $('usage').textContent = ''; $('usage').removeAttribute('title'); }
   const listKey = JSON.stringify([state.activeSessionId, state.sessions]);
   if (listKey !== sidebarRendered) {
     sidebarRendered = listKey; $('sessions').replaceChildren(); $('session-count').textContent = state.sessions.length;
@@ -97,6 +133,7 @@ function render() {
       const b = node('button', `session-item ${item.id === state.activeSessionId ? 'active' : ''}`); b.title = item.workspace;
       b.setAttribute('aria-current', item.id === state.activeSessionId ? 'true' : 'false'); b.append(node('strong', '', '◌  ' + item.title));
       const meta = node('div', 'session-meta'); meta.append(node('span', '', new Date(item.updatedAt).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }) + ' · ' + time(item.updatedAt)), node('span', 'session-state', labels[item.status])); b.append(meta);
+      const cost = costSummary(item.usage); b.append(node('div', 'session-usage', cost.label)); b.title = `${item.workspace}\n${cost.title}`;
       b.onclick = async () => { try { await api(`/api/sessions/${item.id}/select`, {}); $('sidebar').classList.remove('open'); rendered = ''; await refresh(); } catch (e) { toast(e.message); } };
       $('sessions').append(b);
     }
@@ -116,7 +153,7 @@ let refreshing = false, refreshAgain = false;
 async function refresh() {
   if (refreshing) { refreshAgain = true; return; }
   refreshing = true;
-  try { state = await api('/api/state'); connected = true; render(); }
+  try { state = await api('/api/state'); connected = true; await syncHolidayOverride(); render(); }
   catch (e) { connected = false; render(); }
   finally { refreshing = false; if (refreshAgain) { refreshAgain = false; void refresh(); } }
 }
@@ -148,8 +185,8 @@ $('holiday-override').onchange = event => {
     if (event.target.checked) localStorage.setItem(holidayOverrideStorageKey, beijingClock().date);
     else localStorage.removeItem(holidayOverrideStorageKey);
   } catch {}
-  updatePeakNotice();
+  updatePeakNotice(); void syncHolidayOverride(true);
 };
-setInterval(updatePeakNotice, 30000);
+setInterval(() => { updatePeakNotice(); void syncHolidayOverride(); }, 30000);
 document.addEventListener('click', event => { if (innerWidth <= 700 && !event.target.closest('.sidebar') && !event.target.closest('#mobile-menu')) $('sidebar').classList.remove('open'); });
 void refresh();
