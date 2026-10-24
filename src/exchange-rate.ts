@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { atomicWrite } from './store.js';
+import { beijingDate } from './pricing.js';
 
 export type ExchangeRate = {
   base: 'USD';
@@ -31,7 +32,7 @@ export class ExchangeRateCache {
       if (saved.base === 'USD' && saved.quote === 'CNY' &&
           Number.isFinite(saved.rate) && saved.rate > 0 && saved.rate < 100 &&
           /^\d{4}-\d{2}-\d{2}$/.test(saved.date) && Number.isFinite(Date.parse(saved.fetchedAt))) {
-        this.current = { ...saved, sourceUrl };
+          this.current = { ...saved, sourceUrl: typeof saved.sourceUrl === 'string' ? saved.sourceUrl : sourceUrl };
       }
     } catch (error) {
       console.warn('无法读取汇率缓存，将在联网后重新获取。', error instanceof Error ? error.message : String(error));
@@ -57,7 +58,8 @@ export class ExchangeRateCache {
   }
 
   private async update() {
-    const response = await fetch(sourceUrl, {
+    const url = `${sourceUrl}?date=${beijingDate(new Date())}`;
+    const response = await fetch(url, {
       headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8000),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -67,7 +69,7 @@ export class ExchangeRateCache {
         payload.rate! <= 0 || payload.rate! >= 100) throw new Error('返回的 USD/CNY 汇率无效。');
     const next: ExchangeRate = {
       base: 'USD', quote: 'CNY', rate: payload.rate!, date: payload.date,
-      fetchedAt: new Date().toISOString(), sourceUrl,
+      fetchedAt: new Date().toISOString(), sourceUrl: url,
     };
     const changed = !this.current || this.current.rate !== next.rate || this.current.date !== next.date;
     this.current = next;
