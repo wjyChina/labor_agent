@@ -6,6 +6,8 @@ import { z } from 'zod';
 import { loadConfig } from './config.js';
 import { Store, AppError } from './store.js';
 import { Agent } from './agent.js';
+import { HolidayCalendar } from './holiday-calendar.js';
+import { beijingDate } from './pricing.js';
 import { baseUrl, serviceId, mcpToken } from './service.js';
 
 const config = loadConfig();
@@ -37,7 +39,10 @@ function releaseLock() {
   try { if (JSON.parse(fs.readFileSync(lockPath, 'utf8')).lockId === lockId) fs.unlinkSync(lockPath); } catch {}
 }
 process.once('exit', releaseLock);
-const store = new Store(config.dataDir), agent = new Agent(config, store);
+const store = new Store(config.dataDir);
+const holidayCalendar = new HolidayCalendar(config.dataDir, () =>
+  store.emit('change', { sessionId: store.activeSessionId || undefined }));
+const agent = new Agent(config, store, holidayCalendar);
 const sessionCreationToken = mcpToken(config);
 const app = express(); app.disable('x-powered-by');
 const origin = baseUrl(config), localOrigin = `http://localhost:${config.port}`;
@@ -55,10 +60,16 @@ app.use((req, res, next) => {
 });
 app.use(express.json({ limit: '1mb' }));
 app.use('/api', (_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
-const status = () => ({ app: 'labor-agent', version: '0.1.0', serviceId: serviceId(config), pid: process.pid,
-  url: origin, configured: !!config.apiKey, model: config.model, baseUrl: config.baseUrl,
-  workspace: config.workspace, cacheMode: config.cacheMode, bashPath: agent.tools.bashPath,
-  activeSessionId: store.activeSessionId, running: store.list().filter(s => s.status === 'running').length });
+const status = () => {
+  const date = beijingDate(new Date()), calendar = holidayCalendar.status(date);
+  const manualOverride = store.isHolidayOverride(date);
+  return { app: 'labor-agent', version: '0.1.0', serviceId: serviceId(config), pid: process.pid,
+    url: origin, configured: !!config.apiKey, model: config.model, baseUrl: config.baseUrl,
+    workspace: config.workspace, cacheMode: config.cacheMode, bashPath: agent.tools.bashPath,
+    activeSessionId: store.activeSessionId, running: store.list().filter(s => s.status === 'running').length,
+    holidayCalendar: { ...calendar, automaticHoliday: calendar.isHoliday, manualOverride,
+      isHoliday: calendar.isHoliday || manualOverride } };
+};
 app.get('/api/health', (_req, res) => { res.json(status()); });
 app.get('/api/state', (_req, res) => { res.json({ ...status(), sessions: store.list(),
   session: store.activeSessionId ? store.view(store.get()) : null }); });
@@ -158,6 +169,7 @@ app.use((error: any, _req: express.Request, res: express.Response, _next: expres
 const server = app.listen(config.port, '127.0.0.1', () => {
   console.log(`Labor Agent: ${origin}\nWorkspace: ${config.workspace}\nModel: ${config.model}\nAPI key: ${config.apiKey ? 'configured' : 'not configured'}`);
 });
+holidayCalendar.start();
 server.on('error', error => { console.error(error.message); process.exit(1); });
 let stopping = false;
 async function stop() {

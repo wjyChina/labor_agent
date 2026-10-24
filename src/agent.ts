@@ -4,12 +4,13 @@ import { AppError, Store, type Session, type Message } from './store.js';
 import { ResponsesProvider, ProviderError } from './provider.js';
 import { ToolExecutor, clip } from './tools.js';
 import { beijingDate, estimateDeepSeekFlash } from './pricing.js';
+import type { HolidayCalendar } from './holiday-calendar.js';
 
 export class Agent {
   readonly tools: ToolExecutor;
   private provider: ResponsesProvider;
   private runs = new Map<string, { controller: AbortController; promise: Promise<void> }>();
-  constructor(public config: Config, public store: Store) {
+  constructor(public config: Config, public store: Store, private holidayCalendar?: HolidayCalendar) {
     this.tools = new ToolExecutor(config); this.provider = new ResponsesProvider(config);
   }
   private validateText(text: string) {
@@ -31,8 +32,10 @@ export class Agent {
     const output = Math.max(0, Number(usage?.output_tokens) || 0);
     const cached = Math.min(input, Math.max(0, Number(usage?.input_tokens_details?.cached_tokens) || 0));
     s.usage.input += input; s.usage.output += output; s.usage.cached += cached;
+    const date = beijingDate(at);
+    const holiday = this.store.isHolidayOverride(date) || this.holidayCalendar?.isHoliday(date) || false;
     const estimate = estimateDeepSeekFlash({ baseUrl: this.config.baseUrl, model: this.config.model, at,
-      holiday: this.store.isHolidayOverride(beijingDate(at)), inputTokens: input, cachedTokens: cached, outputTokens: output });
+      holiday, inputTokens: input, cachedTokens: cached, outputTokens: output });
     if (!estimate) return;
     const model = this.config.model.trim();
     s.usage.estimatedCosts ||= {};
