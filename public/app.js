@@ -9,6 +9,11 @@ async function api(url, body) {
 }
 const time = value => new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 function formatUsd(value) { return `USD $${Number(value || 0).toFixed(6)}`; }
+function cacheHitRate(usage = {}) {
+  const input = Math.max(0, Number(usage.input) || 0);
+  const cached = Math.min(input, Math.max(0, Number(usage.cached) || 0));
+  return input > 0 ? `${(cached / input * 100).toFixed(1)}%` : '—';
+}
 function costSummary(usage = {}) {
   const entries = Object.entries(usage.estimatedCosts || {});
   const hasUsage = (usage.input || 0) + (usage.output || 0) > 0;
@@ -122,8 +127,9 @@ function render() {
   $('prompt').placeholder = !s ? '等待 AI 创建会话' : running ? '补充要求或调整方向…' : '发送消息…';
   if (s) {
     const cost = costSummary(s.usage);
-    $('usage').textContent = `输入 ${s.usage.input.toLocaleString()} · 输出 ${s.usage.output.toLocaleString()} · 缓存命中 ${s.usage.cached.toLocaleString()}（包含在输入中）tokens · ${cost.label}`;
-    $('usage').title = cost.title;
+    const rate = cacheHitRate(s.usage);
+    $('usage').textContent = `输入 ${s.usage.input.toLocaleString()} · 输出 ${s.usage.output.toLocaleString()} · 缓存命中 ${s.usage.cached.toLocaleString()}（命中率 ${rate}，包含在输入中）tokens · ${cost.label}`;
+    $('usage').title = `缓存命中率 ${rate} = 缓存命中输入 token ÷ 输入 token。\n${cost.title}`;
   } else { $('usage').textContent = ''; $('usage').removeAttribute('title'); }
   const listKey = JSON.stringify([state.activeSessionId, state.sessions]);
   if (listKey !== sidebarRendered) {
@@ -133,7 +139,9 @@ function render() {
       const b = node('button', `session-item ${item.id === state.activeSessionId ? 'active' : ''}`); b.title = item.workspace;
       b.setAttribute('aria-current', item.id === state.activeSessionId ? 'true' : 'false'); b.append(node('strong', '', '◌  ' + item.title));
       const meta = node('div', 'session-meta'); meta.append(node('span', '', new Date(item.updatedAt).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }) + ' · ' + time(item.updatedAt)), node('span', 'session-state', labels[item.status])); b.append(meta);
-      const cost = costSummary(item.usage); b.append(node('div', 'session-usage', cost.label)); b.title = `${item.workspace}\n${cost.title}`;
+      const cost = costSummary(item.usage), rate = cacheHitRate(item.usage);
+      b.append(node('div', 'session-usage', `缓存命中率 ${rate} · ${cost.label}`));
+      b.title = `${item.workspace}\n缓存命中率 ${rate} = 缓存命中输入 token ÷ 输入 token。\n${cost.title}`;
       b.onclick = async () => { try { await api(`/api/sessions/${item.id}/select`, {}); $('sidebar').classList.remove('open'); rendered = ''; await refresh(); } catch (e) { toast(e.message); } };
       $('sessions').append(b);
     }
