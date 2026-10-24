@@ -51,20 +51,30 @@ function updatePeakNotice() {
   if (!isDeepSeek) return;
 
   const clock = beijingClock(), weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(clock.weekday);
+  const calendar = state.holidayCalendar;
+  const calendarAvailable = calendar?.date === clock.date && calendar.available;
+  const automaticHoliday = !!(calendarAvailable && calendar.automaticHoliday);
   let holiday = false;
   try { holiday = localStorage.getItem(holidayOverrideStorageKey) === clock.date; } catch {}
-  $('holiday-override').checked = holiday;
+  const manualHoliday = holiday;
+  holiday = manualHoliday || automaticHoliday;
+  $('holiday-override').checked = manualHoliday;
   const minuteOfDay = Number(clock.hour) * 60 + Number(clock.minute);
   const weekdayPeak = weekday >= 1 && weekday <= 5 &&
     ((minuteOfDay >= 9 * 60 && minuteOfDay < 12 * 60) || (minuteOfDay >= 14 * 60 && minuteOfDay < 18 * 60));
   const peak = weekdayPeak && !holiday;
+  const calendarNote = calendarAvailable && calendar.fetchedAt
+    ? `自动节假日表更新于 ${new Date(calendar.fetchedAt).toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' })}。`
+    : '自动节假日表暂不可用或尚未发布，请手动标记法定节假日。';
   banner.classList.toggle('peak-active', peak);
   $('peak-time').textContent = `北京时间 ${clock.hour}:${clock.minute}`;
-  $('peak-title').textContent = holiday ? '法定节假日 · 低谷时段' : peak ? '当前高峰时段' : '当前低谷时段';
+  $('peak-title').textContent = holiday
+    ? `${manualHoliday ? '手动标记' : '自动识别'}节假日 · 低谷时段`
+    : peak ? '当前高峰时段' : '当前低谷时段';
   $('peak-detail').textContent = peak
-    ? '工作日 09:00–12:00、14:00–18:00；低谷价格约为高峰的一半。页面不自动识别法定节假日，遇节假日请勾选上方选项。'
-    : holiday ? '法定节假日全天按低谷计，价格约为高峰的一半。'
-      : '工作日 09:00–12:00、14:00–18:00 为高峰；其余时段为低谷。法定节假日需手动勾选，全天按低谷计。';
+    ? `工作日 09:00–12:00、14:00–18:00 为高峰；低谷价格约为高峰的一半。${calendarNote}`
+    : holiday ? `法定节假日全天按低谷计，价格约为高峰的一半。${calendarNote}`
+      : `工作日 09:00–12:00、14:00–18:00 为高峰；其余时段为低谷。${calendarNote}`;
 }
 async function syncHolidayOverride(force = false) {
   if (!state) return;
@@ -195,6 +205,9 @@ $('holiday-override').onchange = event => {
   } catch {}
   updatePeakNotice(); void syncHolidayOverride(true);
 };
-setInterval(() => { updatePeakNotice(); void syncHolidayOverride(); }, 30000);
+setInterval(() => {
+  updatePeakNotice(); void syncHolidayOverride();
+  if (state?.holidayCalendar?.date !== beijingClock().date) void refresh();
+}, 30000);
 document.addEventListener('click', event => { if (innerWidth <= 700 && !event.target.closest('.sidebar') && !event.target.closest('#mobile-menu')) $('sidebar').classList.remove('open'); });
 void refresh();

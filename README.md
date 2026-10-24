@@ -145,7 +145,7 @@ npm run setup:skill
 
 - **DeepSeek 默认 `local`**：每轮将完整的 Responses input/output（包括 reasoning、工具调用和结果）持久保存，后续请求完整续传。重启后台后可以继续旧会话。
 - **服务端前缀缓存**由 DeepSeek 自动管理；界面按接口返回的用量显示每个 session 的缓存命中量和命中率（缓存命中输入 token ÷ 输入 token）。保存历史不代表每轮免计费。
-- 网页按 session 展示 DeepSeek Flash 的 USD 费用估算，按每次请求的峰谷时段统计输入、缓存命中和输出 token；缓存命中属于输入 token 的子集。升级前缺少分时记录的历史用量及其他模型不计入估算，法定节假日需在网页手动勾选。估算使用[DeepSeek 官方价格](https://api-docs.deepseek.com/quick_start/pricing/)，实际账单以服务商为准。
+- 网页按 session 展示 DeepSeek Flash 的 USD 费用估算，按每次请求的峰谷时段统计输入、缓存命中和输出 token；缓存命中属于输入 token 的子集。中国法定节假日从 [Hi8 节假日 API](https://hi8.com/t/jiejiari-api) 自动同步到本地缓存，服务启动时立即检查并每日更新；同步失败保留上次数据，网页仍可手动标记。升级前缺少分时记录的历史用量及其他模型不计入估算。估算使用[DeepSeek 官方价格](https://api-docs.deepseek.com/quick_start/pricing/)，实际账单以服务商为准。
 - **`previous_response_id`**：仅供支持服务端上下文的网关；仅发送新增项，并继续发送系统指令。服务端明确报告 ID 失效时，回退到本地完整历史；更换模型、地址或密钥时重置 ID。
 - DeepSeek 官方当前**不支持** `previous_response_id`、`conversation` 和 `store`，因此连接官方接口时应保留 `local`。[DeepSeek Responses 兼容说明](https://api-docs.deepseek.com/guides/responses_api/)。ID 续接语义参见 [OpenAI 会话状态说明](https://developers.openai.com/api/docs/guides/conversation-state)。
 - 暂不做自动压缩或总结，超出模型上下文窗口时会显示接口错误，需要新建会话。请求失败和停止执行都会保留已完成的记录与文件修改。
