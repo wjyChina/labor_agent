@@ -8,6 +8,38 @@ async function api(url, body) {
   const result = await response.json(); if (!response.ok) throw new Error(result.error || '请求失败'); return result;
 }
 const time = value => new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+const holidayOverrideStorageKey = 'labor-agent.deepseek-holiday-date';
+function beijingClock(now = new Date()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now).map(part => [part.type, part.value]));
+  return { ...parts, date: `${parts.year}-${parts.month}-${parts.day}` };
+}
+function updatePeakNotice() {
+  const banner = $('peak-notice');
+  if (!banner || !state) return;
+  let isDeepSeek = false;
+  try { isDeepSeek = new URL(state.baseUrl).hostname.toLowerCase() === 'api.deepseek.com'; } catch {}
+  banner.classList.toggle('hidden', !isDeepSeek);
+  if (!isDeepSeek) return;
+
+  const clock = beijingClock(), weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(clock.weekday);
+  let holiday = false;
+  try { holiday = localStorage.getItem(holidayOverrideStorageKey) === clock.date; } catch {}
+  $('holiday-override').checked = holiday;
+  const minuteOfDay = Number(clock.hour) * 60 + Number(clock.minute);
+  const weekdayPeak = weekday >= 1 && weekday <= 5 &&
+    ((minuteOfDay >= 9 * 60 && minuteOfDay < 12 * 60) || (minuteOfDay >= 14 * 60 && minuteOfDay < 18 * 60));
+  const peak = weekdayPeak && !holiday;
+  banner.classList.toggle('peak-active', peak);
+  $('peak-time').textContent = `北京时间 ${clock.hour}:${clock.minute}`;
+  $('peak-title').textContent = holiday ? '法定节假日 · 低谷时段' : peak ? '当前高峰时段' : '当前低谷时段';
+  $('peak-detail').textContent = peak
+    ? '工作日 09:00–12:00、14:00–18:00；低谷价格约为高峰的一半。页面不自动识别法定节假日，遇节假日请勾选上方选项。'
+    : holiday ? '法定节假日全天按低谷计，价格约为高峰的一半。'
+      : '工作日 09:00–12:00、14:00–18:00 为高峰；其余时段为低谷。法定节假日需手动勾选，全天按低谷计。';
+}
 function content(text) {
   const container = node('div', 'text');
   // A small safe renderer: all text uses textContent, including model-generated code.
@@ -43,6 +75,7 @@ function render() {
   $('session-title').textContent = s?.title || '未选择会话';
   $('workspace').textContent = s?.workspace || state.workspace; $('workspace').title = $('workspace').textContent;
   $('model').textContent = state.model; $('engine-dot').classList.toggle('off', !state.configured || !connected);
+  updatePeakNotice();
   $('connection').textContent = connected ? '● 本地已连接' : '连接已断开';
   $('status').textContent = labels[s?.status] || '待命'; $('status').className = `status ${s?.status || ''}`;
   $('notice').classList.toggle('hidden', state.configured && connected);
@@ -110,5 +143,13 @@ $('settings').onclick = () => {
 };
 for (const button of document.querySelectorAll('[data-close]')) button.onclick = () => $(button.dataset.close).close();
 $('mobile-menu').onclick = () => $('sidebar').classList.toggle('open');
+$('holiday-override').onchange = event => {
+  try {
+    if (event.target.checked) localStorage.setItem(holidayOverrideStorageKey, beijingClock().date);
+    else localStorage.removeItem(holidayOverrideStorageKey);
+  } catch {}
+  updatePeakNotice();
+};
+setInterval(updatePeakNotice, 30000);
 document.addEventListener('click', event => { if (innerWidth <= 700 && !event.target.closest('.sidebar') && !event.target.closest('#mobile-menu')) $('sidebar').classList.remove('open'); });
 void refresh();
