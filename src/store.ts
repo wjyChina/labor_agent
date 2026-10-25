@@ -11,11 +11,17 @@ export type Message = {
   state?: 'running' | 'done' | 'error' | 'skipped';
   kind?: 'guidance'; delivery?: 'queued' | 'applied';
 };
+export type ContextBudget = {
+  limitTokens: number; warnRatio: number; estimatedInputTokens: number;
+  reservedOutputTokens: number; estimatedRequestTokens: number; ratio: number;
+  status: 'ok' | 'warning' | 'exceeded'; source: 'estimate' | 'provider'; updatedAt: string;
+};
 export type Session = {
   id: string; title: string; workspace: string; createdAt: string; updatedAt: string;
   status: 'idle' | 'running' | 'error' | 'cancelled';
   messages: Message[]; history: ApiItem[]; previousResponseId?: string;
   responseCursor?: number; providerKey?: string; error?: string;
+  contextBudget?: ContextBudget;
   usage: { input: number; output: number; cached: number; estimatedCosts?: Record<string, EstimatedCost> };
 };
 
@@ -104,8 +110,8 @@ export class Store extends EventEmitter {
   }
   list() {
     return [...this.sessions.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      .map(({ id, title, workspace, createdAt, updatedAt, status, usage }) =>
-        ({ id, title, workspace, createdAt, updatedAt, status, usage }));
+      .map(({ id, title, workspace, createdAt, updatedAt, status, usage, contextBudget }) =>
+        ({ id, title, workspace, createdAt, updatedAt, status, usage, contextBudget }));
   }
   view(s: Session) {
     const { history, providerKey, responseCursor, ...visible } = s;

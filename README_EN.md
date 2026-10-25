@@ -19,6 +19,8 @@ Let an execution agent handle implementation while the primary AI plans and veri
 - Responses API, full local history replay, and per-session cache-hit counts and rates; configurable API key, URL and model.
 - Per-session RMB cost estimates for DeepSeek Flash. USD usage is priced at each request's peak/off-peak rate, then converted using a daily updated [USD/CNY mid-market rate](https://frankfurter.dev/); displayed historical RMB amounts change when the rate updates. Cache hits are a subset of input tokens. Chinese public holidays sync from the [Hi8 holiday API](https://hi8.com/t/jiejiari-api) at startup and daily to a local cache; failed updates retain the previous data, and manual holiday marking remains available. Other models and legacy usage without period data are not estimated.
 - The service opens the default browser when it starts. AI agents use MCP tools for ordinary collaboration and do not open or operate the UI; users can still inspect and operate the page directly. Headless environments can still use the service through MCP.
+- Before each model request, the service estimates session context usage and blocks the turn at the configured threshold with guidance to create a new session, avoiding a request that is likely to exceed the context window.
+- The UI renders common Markdown in user and agent messages, including headings, lists, links, quotes, tables and code blocks; tool output remains plain text.
 
 ## Deployment
 

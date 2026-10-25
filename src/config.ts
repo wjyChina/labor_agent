@@ -8,6 +8,8 @@ export const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.u
 
 const integer = (fallback: number, min: number, max: number) =>
   z.coerce.number().int().min(min).max(max).default(fallback);
+const ratio = (fallback: number, min: number, max: number) =>
+  z.coerce.number().min(min).max(max).default(fallback);
 const schema = z.object({
   LABOR_API_KEY: z.string().default(''),
   LABOR_BASE_URL: z.string().url().default('https://api.deepseek.com'),
@@ -15,6 +17,8 @@ const schema = z.object({
   LABOR_CACHE_MODE: z.enum(['local', 'previous_response_id']).default('local'),
   LABOR_REASONING_EFFORT: z.enum(['none', 'low', 'high', 'max']).default('high'),
   LABOR_MAX_OUTPUT_TOKENS: integer(32768, 256, 131072),
+  LABOR_CONTEXT_LIMIT_TOKENS: integer(1048576, 4096, 8000000),
+  LABOR_CONTEXT_WARN_RATIO: ratio(0.9, 0.5, 0.99),
   LABOR_REQUEST_TIMEOUT_MS: integer(180000, 1000, 1800000),
   LABOR_WORKSPACE: z.string().default('.'),
   LABOR_DATA_DIR: z.string().default('.labor-agent'),
@@ -38,7 +42,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     projectRoot, apiKey: c.LABOR_API_KEY.trim(),
     baseUrl: c.LABOR_BASE_URL.replace(/\/+$/, ''), model: c.LABOR_MODEL,
     cacheMode: c.LABOR_CACHE_MODE, reasoningEffort: c.LABOR_REASONING_EFFORT,
-    maxOutputTokens: c.LABOR_MAX_OUTPUT_TOKENS,
+    maxOutputTokens: c.LABOR_MAX_OUTPUT_TOKENS, contextLimitTokens: c.LABOR_CONTEXT_LIMIT_TOKENS,
+    contextWarnRatio: c.LABOR_CONTEXT_WARN_RATIO,
     requestTimeout: c.LABOR_REQUEST_TIMEOUT_MS,
     workspace: path.resolve(projectRoot, c.LABOR_WORKSPACE),
     dataDir: path.resolve(projectRoot, c.LABOR_DATA_DIR), port: c.LABOR_PORT,

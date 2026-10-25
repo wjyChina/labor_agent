@@ -19,6 +19,13 @@ function cacheHitRate(usage = {}) {
   const cached = Math.min(input, Math.max(0, Number(usage.cached) || 0));
   return input > 0 ? `${(cached / input * 100).toFixed(1)}%` : '—';
 }
+function contextBudgetSummary(budget = {}) {
+  if (!budget || !Number.isFinite(Number(budget.ratio))) return '';
+  const ratio = Number(budget.ratio);
+  const percent = `${(ratio * 100).toFixed(1)}%`;
+  const status = budget.status === 'warning' || budget.status === 'exceeded' ? ' · 请新建 session' : '';
+  return `上下文 ${percent}${status}`;
+}
 function costSummary(usage = {}, fx = state?.usdCnyRate) {
   const entries = Object.entries(usage.estimatedCosts || {});
   const hasUsage = (usage.input || 0) + (usage.output || 0) > 0;
@@ -97,15 +104,115 @@ async function syncHolidayOverride(force = false) {
   holidaySyncQueue = request.catch(() => {});
   try { await request; syncedHolidayOverrideKey = key; } catch {}
 }
+function safeUrl(value) {
+  const url = value.trim();
+  if (/^(https?:|mailto:|#|\/|\.\/|\.\.\/)/i.test(url) && !/^javascript:/i.test(url)) return url;
+  return null;
+}
+function appendInline(parent, value) {
+  let rest = value;
+  const patterns = [
+    { type: 'code', regex: /`([^`\n]+)`/ },
+    { type: 'link', regex: /\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/ },
+    { type: 'strong', regex: /\*\*([^*\n]+)\*\*|__([^_\n]+)__/ },
+    { type: 'del', regex: /~~([^~\n]+)~~/ },
+    { type: 'em', regex: /\*([^*\n]+)\*/ },
+    { type: 'em', regex: /_([^_\n]+)_/ },
+  ];
+  while (rest) {
+    let selected = null;
+    for (const pattern of patterns) {
+      const match = pattern.regex.exec(rest);
+      if (!match || (selected && match.index >= selected.match.index)) continue;
+      selected = { ...pattern, match };
+    }
+    if (!selected) { parent.append(document.createTextNode(rest)); break; }
+    if (selected.match.index > 0) parent.append(document.createTextNode(rest.slice(0, selected.match.index)));
+    const match = selected.match;
+    if (selected.type === 'code') {
+      parent.append(node('code', 'inline-code', match[1]));
+    } else if (selected.type === 'link') {
+      const href = safeUrl(match[2]);
+      if (!href) parent.append(document.createTextNode(match[0]));
+      else {
+        const link = node('a', '', ''); appendInline(link, match[1]); link.href = href;
+        if (/^https?:/i.test(href)) { link.target = '_blank'; link.rel = 'noopener noreferrer'; }
+        parent.append(link);
+      }
+    } else {
+      const tag = selected.type === 'strong' ? 'strong' : selected.type === 'del' ? 'del' : 'em';
+      const child = node(tag); appendInline(child, match[1] || match[2]); parent.append(child);
+    }
+    rest = rest.slice(match.index + match[0].length);
+  }
+}
+function tableCells(line) {
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim());
+}
+function isTableSeparator(line) {
+  return tableCells(line).length > 0 && tableCells(line).every(cell => /^:?-{3,}:?$/.test(cell));
+}
+function appendTable(container, lines, index) {
+  if (index + 1 >= lines.length || !/^\s*\|/.test(lines[index]) || !isTableSeparator(lines[index + 1])) return index;
+  const headers = tableCells(lines[index]), separators = tableCells(lines[index + 1]);
+  const table = node('table', 'markdown-table'), thead = node('thead'), headerRow = node('tr');
+  headers.forEach((header, column) => {
+    const cell = node('th'); appendInline(cell, header);
+    const alignment = separators[column] || '';
+    cell.style.textAlign = alignment.startsWith(':') && alignment.endsWith(':') ? 'center' : alignment.endsWith(':') ? 'right' : alignment.startsWith(':') ? 'left' : '';
+    headerRow.append(cell);
+  });
+  thead.append(headerRow); table.append(thead);
+  const tbody = node('tbody'); let cursor = index + 2;
+  while (cursor < lines.length && /^\s*\|/.test(lines[cursor]) && lines[cursor].trim()) {
+    const row = node('tr'); tableCells(lines[cursor]).forEach((value, column) => {
+      const cell = node('td'); appendInline(cell, value);
+      const header = thead.querySelectorAll('th')[column]; if (header) cell.style.textAlign = header.style.textAlign;
+      row.append(cell);
+    });
+    tbody.append(row); cursor++;
+  }
+  if (tbody.children.length) table.append(tbody);
+  container.append(table); return cursor;
+}
+function markdownBlockStart(line, nextLine = '') {
+  return /^\s*(```|#{1,6}\s|>\s?|[-*_])/.test(line) || /^\s*(?:[-*+]\s+|\d+[.)]\s+)/.test(line) || (/^\s*\|/.test(line) && isTableSeparator(nextLine));
+}
 function content(text) {
   const container = node('div', 'text');
-  // A small safe renderer: all text uses textContent, including model-generated code.
-  const parts = text.split(/(```[^\n]*\n[\s\S]*?(?:```|$))/g);
-  for (const part of parts) {
-    if (!part) continue;
-    if (part.startsWith('```')) {
-      const pre = node('pre'); pre.append(node('code', '', part.replace(/^```[^\n]*\n/, '').replace(/```$/, ''))); container.append(pre);
-    } else container.append(node('p', '', part.trim()));
+  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n'); let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!line.trim()) { index++; continue; }
+    if (/^\s*```/.test(line)) {
+      const language = line.trim().slice(3).trim().split(/\s+/)[0]; const code = []; index++;
+      while (index < lines.length && !/^\s*```/.test(lines[index])) code.push(lines[index++]);
+      if (index < lines.length) index++;
+      const pre = node('pre', 'markdown-code'); const codeNode = node('code');
+      if (/^[\w+-]+$/.test(language)) codeNode.dataset.language = language;
+      codeNode.textContent = code.join('\n'); pre.append(codeNode); container.append(pre); continue;
+    }
+    const heading = line.match(/^\s*(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (heading) { const h = node(`h${heading[1].length}`); appendInline(h, heading[2]); container.append(h); index++; continue; }
+    if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)) { container.append(node('hr')); index++; continue; }
+    const tableEnd = appendTable(container, lines, index); if (tableEnd !== index) { index = tableEnd; continue; }
+    if (/^\s*>/.test(line)) {
+      const quote = node('blockquote');
+      while (index < lines.length && /^\s*>/.test(lines[index])) { appendInline(quote, lines[index].replace(/^\s*>\s?/, '')); if (/^\s*>/.test(lines[index + 1] || '')) quote.append(document.createElement('br')); index++; }
+      container.append(quote); continue;
+    }
+    const unordered = /^\s*[-*+]\s+/.test(line), ordered = /^\s*\d+[.)]\s+/.test(line);
+    if (unordered || ordered) {
+      const list = node(ordered ? 'ol' : 'ul');
+      if (ordered) { const start = line.match(/^\s*(\d+)/); if (start && start[1] !== '1') list.start = Number(start[1]); }
+      while (index < lines.length && (ordered ? /^\s*\d+[.)]\s+/.test(lines[index]) : /^\s*[-*+]\s+/.test(lines[index]))) {
+        const item = node('li'); appendInline(item, lines[index].replace(ordered ? /^\s*\d+[.)]\s+/ : /^\s*[-*+]\s+/, '')); list.append(item); index++;
+      }
+      container.append(list); continue;
+    }
+    const paragraph = [];
+    while (index < lines.length && lines[index].trim() && (paragraph.length === 0 || !markdownBlockStart(lines[index], lines[index + 1]))) paragraph.push(lines[index++]);
+    const p = node('p'); paragraph.forEach((part, offset) => { appendInline(p, part); if (offset < paragraph.length - 1) p.append(document.createElement('br')); }); container.append(p);
   }
   return container;
 }
@@ -148,8 +255,9 @@ function render() {
   if (s) {
     const cost = costSummary(s.usage);
     const rate = cacheHitRate(s.usage);
-    $('usage').textContent = `输入 ${s.usage.input.toLocaleString()} · 输出 ${s.usage.output.toLocaleString()} · 缓存命中 ${s.usage.cached.toLocaleString()}（命中率 ${rate}，包含在输入中）tokens · ${cost.label}`;
-    $('usage').title = `缓存命中率 ${rate} = 缓存命中输入 token ÷ 输入 token。\n${cost.title}`;
+    const budget = contextBudgetSummary(s.contextBudget);
+    $('usage').textContent = `输入 ${s.usage.input.toLocaleString()} · 输出 ${s.usage.output.toLocaleString()} · 缓存命中 ${s.usage.cached.toLocaleString()}（命中率 ${rate}，包含在输入中）tokens · ${cost.label}${budget ? ` · ${budget}` : ''}`;
+    $('usage').title = `缓存命中率 ${rate} = 缓存命中输入 token ÷ 输入 token。${s.contextBudget ? `\n上下文估算包含历史输入和预留输出：${s.contextBudget.estimatedRequestTokens.toLocaleString()}/${s.contextBudget.limitTokens.toLocaleString()} tokens。` : ''}\n${cost.title}`;
   } else { $('usage').textContent = ''; $('usage').removeAttribute('title'); }
   const listKey = JSON.stringify([state.activeSessionId, state.sessions]);
   if (listKey !== sidebarRendered) {
@@ -160,8 +268,9 @@ function render() {
       b.setAttribute('aria-current', item.id === state.activeSessionId ? 'true' : 'false'); b.append(node('strong', '', '◌  ' + item.title));
       const meta = node('div', 'session-meta'); meta.append(node('span', '', new Date(item.updatedAt).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }) + ' · ' + time(item.updatedAt)), node('span', 'session-state', labels[item.status])); b.append(meta);
       const cost = costSummary(item.usage), rate = cacheHitRate(item.usage);
-      b.append(node('div', 'session-usage', `缓存命中率 ${rate} · ${cost.label}`));
-      b.title = `${item.workspace}\n缓存命中率 ${rate} = 缓存命中输入 token ÷ 输入 token。\n${cost.title}`;
+      const budget = contextBudgetSummary(item.contextBudget);
+      b.append(node('div', 'session-usage', `缓存命中率 ${rate} · ${cost.label}${budget ? ` · ${budget}` : ''}`));
+      b.title = `${item.workspace}\n缓存命中率 ${rate} = 缓存命中输入 token ÷ 输入 token。${item.contextBudget ? `\n上下文估算 ${item.contextBudget.estimatedRequestTokens.toLocaleString()}/${item.contextBudget.limitTokens.toLocaleString()} tokens。` : ''}\n${cost.title}`;
       b.onclick = async () => { try { await api(`/api/sessions/${item.id}/select`, {}); $('sidebar').classList.remove('open'); rendered = ''; await refresh(); } catch (e) { toast(e.message); } };
       $('sessions').append(b);
     }

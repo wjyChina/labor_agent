@@ -84,6 +84,7 @@ const status = () => {
   return { app: 'labor-agent', version: '0.1.0', serviceId: serviceId(config), pid: process.pid,
     url: origin, configured: !!config.apiKey, model: config.model, baseUrl: config.baseUrl,
     workspace: config.workspace, cacheMode: config.cacheMode, bashPath: agent.tools.bashPath,
+    contextLimitTokens: config.contextLimitTokens, contextWarnRatio: config.contextWarnRatio,
     activeSessionId: store.activeSessionId, running: store.list().filter(s => s.status === 'running').length,
     holidayCalendar: { ...calendar, automaticHoliday: calendar.isHoliday, manualOverride,
       isHoliday: calendar.isHoliday || manualOverride },
@@ -154,7 +155,13 @@ app.post('/api/sessions/:id/send', async (req, res) => {
     // Acknowledging guidance must not wait for the running task to finish.
   } else {
     // Handle unexpected persistence errors without unhandled promise rejections.
-    void agent.start(session, text, source).catch(e => console.error('Agent persistence error:', e));
+    let run: Promise<void>;
+    try { run = agent.start(session, text, source); }
+    catch (error) {
+      if (error instanceof AppError) return res.status(error.status).json({ error: error.message, contextBudget: session.contextBudget });
+      throw error;
+    }
+    void run.catch(e => console.error('Agent persistence error:', e));
     await agent.wait(session, wait_ms);
   }
   res.json(store.view(session));

@@ -41,6 +41,7 @@ description: 与 Labor Agent/labor_agent 协作时，仅委派适合的复杂代
 - 若当前聊天尚未加载 MCP，说明需要在项目执行 `npm run build`、`npm run setup:mcp`，然后重新加载项目或会话。不要把自己直接做的工作描述成 Labor Agent 的结果。
 - 继续任务时先查 `session_list`，必要时用 `session_get` 确认上下文与目录；使用已有的相关会话。新任务没有适合的会话时由你用 `session_create` 创建，明确传目标项目的 `workspace`。网页不提供会话创建，也不会在首次发送时自动创建，不要求用户在网页点“新建会话”。
 - 记录返回的会话 ID，后续 `agent_send`、`agent_status`、`agent_wait`、`session_get`、`agent_cancel` 都显式传 `session_id`，不要依赖全局活动会话。普通任务不调用 `session_select` 来同步网页；只有用户明确要求切换界面当前会话时才调用它。
+- session 元数据包含 `contextBudget`。如果 `agent_send` 因上下文预算达到阈值而返回预警，停止重试原 session；用相同 `workspace` 调用 `session_create`，把目标、验收标准和未完成事项交接到新 session。
 
 ## 用对话派发和跟进
 
