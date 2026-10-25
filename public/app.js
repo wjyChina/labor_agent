@@ -1,11 +1,122 @@
 const $ = id => document.getElementById(id);
-let state = null, connected = false, sending = false, refreshTimer, toastTimer, rendered = '', sidebarRendered = '', syncedHolidayOverrideKey = '', lastHolidaySyncKey = '', lastHolidaySyncAt = 0, holidaySyncQueue = Promise.resolve();
+let state = null, codexState = null, connected = false, sending = false, refreshTimer, toastTimer, rendered = '', sidebarRendered = '', syncedHolidayOverrideKey = '', lastHolidaySyncKey = '', lastHolidaySyncAt = 0, holidaySyncQueue = Promise.resolve();
 const labels = { idle: '待命', running: '执行中', error: '执行异常', cancelled: '已停止' };
 function node(tag, className, text) { const n = document.createElement(tag); if (className) n.className = className; if (text !== undefined) n.textContent = text; return n; }
 function toast(text) { $('toast').textContent = text; $('toast').classList.remove('hidden'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.add('hidden'), 6000); }
 async function api(url, body) {
   const response = await fetch(url, { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
   const result = await response.json(); if (!response.ok) throw new Error(result.error || '请求失败'); return result;
+}
+let settingsState = null, providerDraftId = null;
+async function loadSettings(force = false) {
+  if (settingsState && !force) return settingsState;
+  settingsState = await api('/api/settings'); return settingsState;
+}
+function selectedProvider() { return settingsState?.providers?.profiles?.find(profile => profile.id === $('provider-profile').value); }
+function selectedSettingsCodexProfile() { return settingsState?.codex?.profiles?.find(profile => profile.id === $('settings-codex-profile').value); }
+function renderProviderEditor() {
+  const select = $('provider-profile'), previous = providerDraftId || select.value;
+  select.replaceChildren();
+  for (const profile of settingsState?.providers?.profiles || []) { const option = node('option', '', `${profile.label}${profile.apiKeyConfigured ? ' · 已配置 Key' : ' · 未配置 Key'}`); option.value = profile.id; select.append(option); }
+  const active = settingsState?.executionDefaults?.backend === 'deepseek' ? settingsState.executionDefaults.profileId : undefined;
+  providerDraftId = previous && settingsState?.providers?.profiles?.some(profile => profile.id === previous) ? previous : active || settingsState?.providers?.profiles?.[0]?.id;
+  if (providerDraftId) select.value = providerDraftId;
+  const profile = selectedProvider();
+  $('provider-label').value = profile?.label || '';
+  $('provider-base-url').value = profile?.baseUrl || 'https://api.deepseek.com';
+  $('provider-model').value = profile?.model || 'deepseek-flash';
+  $('provider-api-key').value = '';
+  $('provider-api-key').placeholder = profile?.apiKeyConfigured ? `已保存 ${profile.apiKeyPreview || 'Key'}，留空保持不变` : '请输入 API Key';
+  $('provider-previous').checked = profile?.cacheMode === 'previous_response_id';
+  $('provider-reasoning').value = profile?.reasoningEffort || 'high';
+  $('provider-delete').disabled = (settingsState?.providers?.profiles?.length || 0) <= 1;
+}
+function renderCodexSettings() {
+  const profileSelect = $('settings-codex-profile'), modelSelect = $('settings-codex-model'), previousProfile = profileSelect.value, previousModel = modelSelect.value;
+  profileSelect.replaceChildren(); modelSelect.replaceChildren();
+  for (const profile of settingsState?.codex?.profiles || []) {
+    const option = node('option', '', `${profile.label}${profile.email ? ` · ${profile.email}` : ''}${profile.loggedIn ? '' : ' · 未登录'}`); option.value = profile.id; option.disabled = !profile.loggedIn; profileSelect.append(option);
+  }
+  const defaults = settingsState?.executionDefaults || {};
+  const chosen = settingsState?.codex?.profiles?.find(profile => profile.id === previousProfile && (profile.loggedIn || profile.login))
+    || settingsState?.codex?.profiles?.find(profile => profile.id === defaults.profileId && profile.loggedIn)
+    || settingsState?.codex?.profiles?.find(profile => profile.loggedIn)
+    || settingsState?.codex?.profiles?.[0];
+  if (chosen) profileSelect.value = chosen.id;
+  const profile = selectedSettingsCodexProfile();
+  for (const model of profile?.models || []) { const option = node('option', '', model.displayName || model.model); option.value = model.model; modelSelect.append(option); }
+  const chosenModel = profile?.models?.find(model => model.model === previousModel) || profile?.models?.find(model => model.model === defaults.model) || profile?.models?.find(model => model.isDefault) || profile?.models?.[0];
+  if (chosenModel) modelSelect.value = chosenModel.model;
+  $('settings-codex-help').textContent = settingsState?.codex?.available
+    ? (profile?.loggedIn ? '模型列表来自当前 Codex 账号。' : '该账号尚未登录，请点击登录。')
+    : (settingsState?.codex?.error || '未找到 Codex CLI。');
+  $('settings-codex-login').textContent = profile?.loggedIn || profile?.login ? '刷新' : '登录';
+  $('settings-codex-login').disabled = !profile;
+}
+function renderSettings() {
+  const backend = settingsState?.executionDefaults?.backend || 'deepseek';
+  $('settings-backend').value = backend;
+  $('deepseek-settings').classList.toggle('hidden', backend !== 'deepseek');
+  $('codex-settings').classList.toggle('hidden', backend !== 'codex');
+  renderProviderEditor(); renderCodexSettings();
+  const info = $('settings-info'); info.replaceChildren();
+  const current = backend === 'deepseek' ? selectedProvider() : selectedSettingsCodexProfile();
+  info.append(node('dt', '', '当前配置'), node('dd', '', current?.label || '—'), node('dt', '', '状态'), node('dd', '', backend === 'deepseek' ? (current?.apiKeyConfigured ? 'API Key 已配置' : '未配置 API Key') : (current?.loggedIn ? 'Codex 已登录' : '未登录')));
+}
+async function openSettings(preferredBackend) {
+  $('settings-error').classList.add('hidden'); $('settings-dialog').showModal();
+  try { await loadSettings(true); if (preferredBackend) settingsState.executionDefaults.backend = preferredBackend; renderSettings(); }
+  catch (error) { $('settings-error').textContent = error.message; $('settings-error').classList.remove('hidden'); }
+}
+async function selectExecution(backend, profileId, model) {
+  await api('/api/execution/select', { backend, profile_id: profileId, model });
+  settingsState = await loadSettings(true); await refresh(); renderSettings();
+}
+async function saveProvider() {
+  const body = { ...(providerDraftId ? { id: providerDraftId } : {}), label: $('provider-label').value.trim(), baseUrl: $('provider-base-url').value.trim(), model: $('provider-model').value.trim(), cacheMode: $('provider-previous').checked ? 'previous_response_id' : 'local', reasoningEffort: $('provider-reasoning').value, ...( $('provider-api-key').value ? { apiKey: $('provider-api-key').value } : {}) };
+  const result = await api('/api/providers', body); providerDraftId = result.provider.id; settingsState = await loadSettings(true); await selectExecution('deepseek', providerDraftId, result.provider.model);
+  $('provider-api-key').value = ''; renderSettings(); toast('DeepSeek 配置已保存并启用。');
+}
+async function loginSettingsCodex() {
+  const profile = selectedSettingsCodexProfile(); if (!profile) return;
+  const result = profile.loggedIn || profile.login ? await api(`/api/codex/${profile.id}/refresh`, {}) : await api(`/api/codex/${profile.id}/login`, {});
+  const url = result.verificationUrl || result.authUrl;
+  if (url) window.open(url, '_blank', 'noopener,noreferrer');
+  if (result.userCode) toast(`请在 OpenAI 页面输入验证码 ${result.userCode}，完成后点击刷新。`); else if (url) toast('请在打开的 OpenAI 页面完成登录，然后点击刷新。');
+  settingsState = await loadSettings(true); renderSettings();
+}
+async function addSettingsCodex() {
+  const result = await api('/api/codex', { add: true }); const url = result.verificationUrl || result.authUrl;
+  if (url) window.open(url, '_blank', 'noopener,noreferrer');
+  if (result.userCode) toast(`请在 OpenAI 页面输入验证码 ${result.userCode}，完成后点击刷新。`);
+  settingsState = await loadSettings(true); renderSettings();
+}
+async function useCodex() {
+  const profile = selectedSettingsCodexProfile(), model = $('settings-codex-model').value;
+  if (!profile?.loggedIn || !model) throw new Error('请先登录 Codex 并选择模型。');
+  await selectExecution('codex', profile.id, model); toast('Codex 已保存并启用。');
+}
+async function openNewSessionDialog() {
+  $('new-session-error').classList.add('hidden'); $('new-session-title').value = '';
+  $('new-session-workspace').value = state?.session?.workspace || state?.workspace || '';
+  const current = state?.activeProvider || state?.executionDefaults || {};
+  $('new-session-execution').textContent = `当前配置：${current.label || (current.backend === 'codex' ? `Codex · ${current.model || '默认模型'}` : `${current.model || state?.model || 'DeepSeek'}`)}`;
+  $('new-session-dialog').showModal(); $('new-session-title').focus();
+}
+async function chooseFolder() {
+  try {
+    const result = await api('/api/dialog/select-folder', {});
+    if (!result.cancelled && result.workspace) $('new-session-workspace').value = result.workspace;
+  } catch (error) { toast(error.message); }
+}
+async function createSessionFromDialog(event) {
+  event.preventDefault();
+  const errorBox = $('new-session-error'); errorBox.classList.add('hidden');
+  const body = { title: $('new-session-title').value.trim() || undefined, workspace: $('new-session-workspace').value.trim() };
+  try {
+    if (!body.workspace) throw new Error('请选择项目文件夹。');
+    await api('/api/sessions/create', body); $('new-session-dialog').close(); rendered = ''; sidebarRendered = ''; await refresh();
+  } catch (error) { errorBox.textContent = error.message; errorBox.classList.remove('hidden'); }
 }
 const time = value => new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 function formatUsd(value) { return `USD $${Number(value || 0).toFixed(6)}`; }
@@ -236,20 +347,27 @@ function message(m) {
 function render() {
   if (!state) return;
   const s = state.session, running = s?.status === 'running';
+  const executionConfigured = state.executionDefaults?.backend === 'codex' || state.configured;
+  const sessionConfigured = s ? (s.backend === 'codex' || state.configured) : executionConfigured;
   $('session-title').textContent = s?.title || '未选择会话';
   $('workspace').textContent = s?.workspace || state.workspace; $('workspace').title = $('workspace').textContent;
-  $('model').textContent = state.model; $('engine-dot').classList.toggle('off', !state.configured || !connected);
+  const globalEngine = state.activeProvider;
+  $('model').textContent = `${globalEngine?.label || 'DeepSeek'} · ${globalEngine?.model || state.model}`;
+  $('model').title = s && state.sessionProvider && state.sessionProvider.backend !== globalEngine?.backend
+    ? `全局默认：${globalEngine?.label || globalEngine?.backend} · ${globalEngine?.model || state.model}\n当前 session：${state.sessionProvider.label} · ${state.sessionProvider.model}`
+    : '新建 session 将使用此全局配置。';
+  $('engine-dot').classList.toggle('off', !sessionConfigured || !connected);
   updatePeakNotice();
   $('connection').textContent = connected ? '● 本地已连接' : '连接已断开';
   $('status').textContent = labels[s?.status] || '待命'; $('status').className = `status ${s?.status || ''}`;
-  $('notice').classList.toggle('hidden', state.configured && connected);
-  $('notice').textContent = !connected ? '与本地服务的连接已断开，正在自动重连…' : '尚未配置 API Key。在项目 .env 中填写 LABOR_API_KEY，然后重启服务即可开始。';
+  $('notice').classList.toggle('hidden', sessionConfigured && connected);
+  $('notice').textContent = !connected ? '与本地服务的连接已断开，正在自动重连…' : state.executionDefaults?.backend === 'codex' ? '当前使用 Codex 订阅。可在左下角设置中切换执行账号、模型或 DeepSeek 配置。' : '尚未配置 API Key。请在左下角“执行账号与模型”中保存 DeepSeek API 配置。';
   const queued = s?.pendingGuidance || 0;
   $('run-caption').classList.toggle('hidden', !running && !queued);
   $('run-caption').replaceChildren(node('span', 'live-dot'), node('span', '', queued ? `${queued} 条引导待应用${running ? '，当前步骤结束后继续' : '，继续对话时处理'}` : '执行中，可以发送引导'));
   $('send').replaceChildren(document.createTextNode(running ? '引导' : '发送'), node('span', '', '↑'));
   $('stop').classList.toggle('hidden', !running);
-  $('send').disabled = sending || !connected || !state.configured || !s;
+  $('send').disabled = sending || !connected || !sessionConfigured || !s;
   $('prompt').disabled = sending || !s;
   $('prompt').placeholder = !s ? '等待 AI 创建会话' : running ? '补充要求或调整方向…' : '发送消息…';
   if (s) {
@@ -267,6 +385,8 @@ function render() {
       const b = node('button', `session-item ${item.id === state.activeSessionId ? 'active' : ''}`); b.title = item.workspace;
       b.setAttribute('aria-current', item.id === state.activeSessionId ? 'true' : 'false'); b.append(node('strong', '', '◌  ' + item.title));
       const meta = node('div', 'session-meta'); meta.append(node('span', '', new Date(item.updatedAt).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }) + ' · ' + time(item.updatedAt)), node('span', 'session-state', labels[item.status])); b.append(meta);
+      const projectName = item.workspace.split(/[\\/]/).filter(Boolean).pop() || item.workspace;
+      b.append(node('div', 'session-project', `⌂ ${projectName}${item.backend === 'codex' ? ` · Codex${item.codex?.model ? ` · ${item.codex.model}` : ''}` : ''}`));
       const cost = costSummary(item.usage), rate = cacheHitRate(item.usage);
       const budget = contextBudgetSummary(item.contextBudget);
       b.append(node('div', 'session-usage', `缓存命中率 ${rate} · ${cost.label}${budget ? ` · ${budget}` : ''}`));
@@ -310,11 +430,20 @@ $('composer').onsubmit = async event => {
 };
 $('prompt').onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); $('composer').requestSubmit(); } };
 $('stop').onclick = async () => { if (!state?.activeSessionId) return; try { await api(`/api/sessions/${state.activeSessionId}/cancel`, {}); await refresh(); } catch (e) { toast(e.message); } };
-$('settings').onclick = () => {
-  const info = $('settings-info'); info.replaceChildren();
-  for (const [label, value] of [['API Key', state?.configured ? '已配置（不向浏览器发送密钥）' : '尚未配置'], ['API 地址', state?.baseUrl], ['模型', state?.model], ['Bash', state?.bashPath], ['会话缓存', state?.cacheMode]]) info.append(node('dt', '', label), node('dd', '', value || '—'));
-  $('settings-dialog').showModal();
-};
+$('new-session').onclick = () => { void openNewSessionDialog(); };
+$('codex-account').onclick = () => { void openSettings('codex'); };
+$('new-session-form').onsubmit = event => { void createSessionFromDialog(event); };
+$('choose-folder').onclick = () => { void chooseFolder(); };
+$('settings').onclick = () => { void openSettings(); };
+$('settings-backend').onchange = () => { if (settingsState) { settingsState.executionDefaults.backend = $('settings-backend').value; renderSettings(); } };
+$('provider-profile').onchange = () => { providerDraftId = $('provider-profile').value; renderProviderEditor(); };
+$('provider-new').onclick = () => { providerDraftId = null; $('provider-profile').value = ''; $('provider-label').value = ''; $('provider-base-url').value = 'https://api.deepseek.com'; $('provider-model').value = 'deepseek-flash'; $('provider-api-key').value = ''; $('provider-api-key').placeholder = '请输入 API Key'; };
+$('provider-save').onclick = () => { void saveProvider().catch(error => { $('settings-error').textContent = error.message; $('settings-error').classList.remove('hidden'); }); };
+$('provider-delete').onclick = () => { void (async () => { await api(`/api/providers/${$('provider-profile').value}/delete`, {}); settingsState = await loadSettings(true); renderSettings(); })().catch(error => { $('settings-error').textContent = error.message; $('settings-error').classList.remove('hidden'); }); };
+$('settings-codex-profile').onchange = () => { renderCodexSettings(); };
+$('settings-codex-login').onclick = () => { void loginSettingsCodex().catch(error => { $('settings-error').textContent = error.message; $('settings-error').classList.remove('hidden'); }); };
+$('settings-codex-add').onclick = () => { void addSettingsCodex().catch(error => { $('settings-error').textContent = error.message; $('settings-error').classList.remove('hidden'); }); };
+$('codex-use').onclick = () => { void useCodex().catch(error => { $('settings-error').textContent = error.message; $('settings-error').classList.remove('hidden'); }); };
 for (const button of document.querySelectorAll('[data-close]')) button.onclick = () => $(button.dataset.close).close();
 $('mobile-menu').onclick = () => $('sidebar').classList.toggle('open');
 $('holiday-override').onchange = event => {

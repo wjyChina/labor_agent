@@ -21,6 +21,8 @@ Let an execution agent handle implementation while the primary AI plans and veri
 - The service opens the default browser when it starts. AI agents use MCP tools for ordinary collaboration and do not open or operate the UI; users can still inspect and operate the page directly. Headless environments can still use the service through MCP.
 - Before each model request, the service estimates session context usage and blocks the turn at the configured threshold with guidance to create a new session, avoiding a request that is likely to exceed the context window.
 - The UI renders common Markdown in user and agent messages, including headings, lists, links, quotes, tables and code blocks; tool output remains plain text.
+- The “Execution account and model” control in the lower-left corner selects the global backend: DeepSeek API or a Codex subscription. DeepSeek endpoint, model and API keys can be saved as multiple local profiles; Codex accounts and models are managed there too. New sessions inherit the selected global setting.
+- The “+” button creates a session and lets you choose a project folder. The folder is saved as the session workspace; with the Codex global setting it is also passed as the Codex thread `cwd`, so Codex can group it by project.
 
 ## Deployment
 
@@ -87,7 +89,9 @@ Once MCP and the skill are loaded, ask:
 
 > Use $labor-agent to fix logout in D:/codes/my-project using its existing architecture. Plan the scope and acceptance criteria before delegating. Preserve styling and verify logout, refresh and protected-route behavior.
 
-The primary AI defines the goal, architecture, workspace, deliverable paths and acceptance criteria, then dispatches through `agent_send`. It reads the final answer and reports first. When process inspection is needed, it starts with recent records from the latest task turn, expands only as needed, and verifies the actual artifacts. Reuse sessions for related work; create a new one for unrelated tasks.
+The primary AI defines the goal, architecture, workspace, deliverable paths and acceptance criteria, then dispatches through `agent_send`. It reads the final answer and reports first. When process inspection is needed, it starts with recent records from the latest task turn, expands only as needed, and verifies the actual artifacts. Reuse a session for corrections or resuming that unfinished task. After a task or deliverable stage is accepted, create a fresh session for the next stage with a short handoff and artifact paths. MCP and skill instructions guide the coordinator; the service does not detect stages or switch a running session automatically.
+
+Ordinary tool results enter DeepSeek's context as previews of at most 4,000 characters, configurable with `LABOR_TOOL_CONTEXT_CHARS`; captured output remains available in the transcript. Labor can read details through its internal `tool_result_get(result_id, offset, limit)` tool (4,000 characters by default, 8,000 maximum per page), without rerunning the command. File reads default to 80 lines and support explicit ranges. Bash retains the head and tail at its capture limit; large logs should be written to authorized artifact files. Existing history is not rewritten and no summarization model calls are added.
 
 MCP tools: `agent_start`, `session_create/list/select/get`, and `agent_send/status/wait/cancel`. The AI creates/selects sessions, sends tasks, waits and reads results through MCP; the service opens the UI on startup, where instructions, replies and tool activity are also visible.
 

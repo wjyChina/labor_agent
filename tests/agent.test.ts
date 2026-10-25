@@ -45,7 +45,7 @@ test('SSE handles UTF-8, split CRLF boundaries, text deltas and final usage', as
   try {
     let delta = '';
     const result = await new ResponsesProvider({ ...f.config, baseUrl: mock.url }).create([{ role: 'user', content: '你好' }], 'test', undefined, new AbortController().signal, text => { delta += text; });
-    assert.equal(delta, '你好'); assert.equal(result.usage.output_tokens, 5); assert.equal(captured.tools.length, 4);
+    assert.equal(delta, '你好'); assert.equal(result.usage.output_tokens, 5); assert.equal(captured.tools.length, 5);
   } finally { await mock.close(); f.cleanup(); }
 });
 test('previous_response_id sends only new items and falls back when server context expires', async () => {
@@ -121,5 +121,69 @@ test('tool loops continue past 40 model calls and finish normally', async () => 
     await agent.start(s, 'loop', 'web');
     assert.equal(count, 42); assert.equal(s.status, 'idle');
     assert.equal(s.history.filter(i => i.type === 'function_call').length, s.history.filter(i => i.type === 'function_call_output').length);
+  } finally { await mock.close(); f.cleanup(); }
+});
+
+for (const cacheMode of ['local', 'previous_response_id'] as const) {
+  test(`large tool results stay archived and can be paged without rerunning (${cacheMode})`, async () => {
+    const f = fixture(), requests: any[] = [];
+    const mock = await listen(async (req, res) => {
+      const b = await body(req); requests.push(b);
+      if (requests.length === 1) json(res, { id: 'large_output', status: 'completed', output: [
+        call('bash', { command: "printf 'head-%s\\n' {1..2000}; printf 'FAILURE_TAIL' >&2; exit 7" }),
+      ] });
+      else if (requests.length === 2) {
+        const result = b.input.find((x: any) => x.type === 'function_call_output');
+        const preview = JSON.parse(result.output);
+        assert.equal(preview.exit_code, 7); assert.equal(preview.stderr, 'FAILURE_TAIL');
+        assert.equal(preview.context_truncated, true); assert.ok(result.output.length <= 1000);
+        assert.ok(!result.output.includes('head-1000'));
+        json(res, { id: 'detail_page', status: 'completed', output: [
+          call('tool_result_get', { result_id: preview.result_id, offset: 10000, limit: 256 }),
+        ] });
+      } else json(res, answer('已读取失败证据，无需重新执行。'));
+    });
+    try {
+      const store = new Store(f.dataDir), agent = new Agent({ ...f.config, cacheMode, baseUrl: mock.url, toolContextChars: 1000 }, store);
+      const s = store.create(f.workspace);
+      await agent.start(s, '读取长命令结果中的失败证据', 'mcp');
+      assert.equal(s.status, 'idle'); assert.equal(requests.length, 3);
+      const captured = s.messages.find(m => m.tool === 'bash')!;
+      assert.ok(captured.text.length > 10000); assert.match(captured.text, /head-1000/);
+      const detail = s.messages.find(m => m.tool === 'tool_result_get')!;
+      const page = JSON.parse(detail.text);
+      assert.equal(page.text, captured.text.slice(10000, 10256));
+      assert.equal(page.next_offset, 10256); assert.equal(page.has_more, true);
+      assert.equal(s.messages.filter(m => m.tool === 'bash').length, 1);
+      assert.equal(s.history.filter(i => i.type === 'function_call').length, s.history.filter(i => i.type === 'function_call_output').length);
+      assert.equal(new Store(f.dataDir).get(s.id).messages.find(m => m.id === captured.id)?.text, captured.text);
+      if (cacheMode === 'previous_response_id') {
+        assert.equal(requests[1].previous_response_id, 'large_output'); assert.equal(requests[1].input.length, 1);
+        assert.equal(requests[2].previous_response_id, 'detail_page'); assert.equal(requests[2].input.length, 1);
+      } else {
+        assert.deepEqual(requests[2].input.slice(0, requests[1].input.length), requests[1].input);
+      }
+    } finally { await mock.close(); f.cleanup(); }
+  });
+}
+
+test('result lookup cannot read another session and never repairs history by deleting calls', async () => {
+  const f = fixture(); const store = new Store(f.dataDir);
+  const other = store.create(f.workspace);
+  const archived = store.add(other, { role: 'tool', tool: 'read', text: 'other-session-data', state: 'done' });
+  let count = 0;
+  const mock = await listen(async (req, res) => {
+    const b = await body(req);
+    if (++count === 1) json(res, { id: 'lookup', status: 'completed', output: [call('tool_result_get', { result_id: archived.id })] });
+    else {
+      const output = b.input.find((x: any) => x.type === 'function_call_output').output;
+      assert.match(output, /当前会话中不存在/); assert.ok(!output.includes('other-session-data'));
+      json(res, answer('当前会话没有该结果。'));
+    }
+  });
+  try {
+    const agent = new Agent({ ...f.config, baseUrl: mock.url }, store), s = store.create(f.workspace);
+    await agent.start(s, '读取结果', 'mcp'); assert.equal(s.status, 'idle');
+    assert.equal(s.messages.find(m => m.tool === 'tool_result_get')?.state, 'error');
   } finally { await mock.close(); f.cleanup(); }
 });

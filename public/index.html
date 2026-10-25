@@ -9,10 +9,11 @@
 <body>
   <aside class="sidebar" id="sidebar">
     <a class="brand" href="/" aria-label="Labor Agent 首页"><span class="logo">L</span><span>Labor Agent</span></a>
-    <div class="section-label">会话记录 <span id="session-count">0</span></div>
+    <div class="section-label"><span>会话记录 <span id="session-count">0</span></span><button class="new-session-button" id="new-session" type="button" title="新建 session">＋</button></div>
     <nav id="sessions" aria-label="会话列表"></nav>
     <div class="sidebar-bottom">
       <div class="engine-line"><span class="live-dot" id="engine-dot"></span><span id="model">正在连接…</span></div>
+      <button class="settings-button" id="codex-account" type="button">⌘ <span>执行账号与模型</span></button>
       <button class="settings-button" id="settings">⚙ <span>设置</span></button>
     </div>
   </aside>
@@ -47,13 +48,44 @@
     </div>
   </main>
   <dialog id="settings-dialog">
-    <div class="dialog-eyebrow">CONNECTION</div><h2>连接与配置</h2><p>在项目根目录的 <code>.env</code> 中配置 API，修改后重启服务。</p>
-    <dl id="settings-info"></dl><pre class="config-example">LABOR_API_KEY=你的 DeepSeek API Key
-LABOR_BASE_URL=https://api.deepseek.com
-LABOR_MODEL=deepseek-flash
-LABOR_CACHE_MODE=local</pre>
-    <p class="settings-note">DeepSeek 使用本地历史续传 Responses API；支持服务端会话的网关可配置 previous_response_id。Bash 以当前系统用户的权限执行命令。</p>
-    <div class="dialog-actions"><button class="primary" type="button" data-close="settings-dialog">知道了</button></div>
+    <div class="dialog-eyebrow">EXECUTION</div><h2>执行账号与模型</h2>
+    <p class="dialog-intro">这里设置整个 Labor Agent 的默认执行配置。保存后，之后新建的 session 和 MCP 创建的 session 会自动使用当前选择；已有 session 继续使用它创建时的绑定。</p>
+    <label class="field-label" for="settings-backend">当前执行引擎</label>
+    <select class="field-input" id="settings-backend"><option value="deepseek">DeepSeek API</option><option value="codex">Codex 订阅</option></select>
+    <section id="deepseek-settings" class="provider-settings">
+      <label class="field-label" for="provider-profile">DeepSeek 配置</label>
+      <div class="field-with-button"><select class="field-input" id="provider-profile"></select><button class="secondary-button" id="provider-new" type="button">新建</button><button class="secondary-button" id="provider-delete" type="button">删除</button></div>
+      <label class="field-label" for="provider-label">配置名称</label><input class="field-input" id="provider-label" maxlength="100" placeholder="例如：DeepSeek 主账号">
+      <label class="field-label" for="provider-base-url">API 地址</label><input class="field-input" id="provider-base-url" placeholder="https://api.deepseek.com">
+      <label class="field-label" for="provider-model">模型</label><input class="field-input" id="provider-model" maxlength="200" placeholder="deepseek-flash">
+      <label class="field-label" for="provider-api-key">API Key <span class="field-muted">（留空表示保留已保存的 Key）</span></label><input class="field-input" id="provider-api-key" type="password" autocomplete="new-password" placeholder="输入后保存，页面不会回显完整 Key">
+      <div class="settings-row"><label class="check-label"><input type="checkbox" id="provider-previous">使用 previous_response_id 缓存模式</label><select class="field-input compact-input" id="provider-reasoning"><option value="none">推理 none</option><option value="low">推理 low</option><option value="high">推理 high</option><option value="max">推理 max</option></select></div>
+      <div class="dialog-actions provider-actions"><button class="primary" id="provider-save" type="button">保存配置并使用</button></div>
+    </section>
+    <section id="codex-settings" class="provider-settings hidden">
+      <label class="field-label" for="settings-codex-profile">Codex 账号</label>
+      <div class="field-with-button"><select class="field-input" id="settings-codex-profile"></select><button class="secondary-button" id="settings-codex-login" type="button">登录</button><button class="secondary-button" id="settings-codex-add" type="button">添加账号</button></div>
+      <label class="field-label" for="settings-codex-model">Codex 模型</label><select class="field-input" id="settings-codex-model"></select>
+      <p class="field-hint" id="settings-codex-help">登录后从 Codex CLI 读取可用模型。</p>
+      <div class="dialog-actions provider-actions"><button class="primary" id="codex-use" type="button">保存并使用 Codex</button></div>
+    </section>
+    <p class="field-error hidden" id="settings-error"></p>
+    <dl id="settings-info"></dl>
+    <p class="settings-note">配置文件保存在本机 <code>.labor-agent</code> 目录，API Key 不会发送到浏览器以外的页面。Bash 仍以当前系统用户权限执行。</p>
+    <div class="dialog-actions"><button class="secondary-button" type="button" data-close="settings-dialog">关闭</button></div>
+  </dialog>
+  <dialog id="new-session-dialog">
+    <div class="dialog-eyebrow">NEW SESSION</div><h2>新建 session</h2>
+    <p class="dialog-intro">选择一个项目文件夹。它会成为 Labor Agent 的工作目录。执行引擎和账号由左下角“执行账号与模型”设置统一决定。</p>
+    <form id="new-session-form">
+      <label class="field-label" for="new-session-title">名称（可选）</label>
+      <input class="field-input" id="new-session-title" maxlength="100" placeholder="例如：修复登录问题">
+      <label class="field-label" for="new-session-workspace">项目文件夹</label>
+      <div class="field-with-button"><input class="field-input" id="new-session-workspace" required><button class="secondary-button" id="choose-folder" type="button">浏览…</button></div>
+      <div class="current-execution" id="new-session-execution">当前配置：加载中…</div>
+      <p class="field-error hidden" id="new-session-error"></p>
+      <div class="dialog-actions"><button class="secondary-button" type="button" data-close="new-session-dialog">取消</button><button class="primary" id="create-session" type="submit">创建</button></div>
+    </form>
   </dialog>
   <div class="toast hidden" id="toast" role="alert"></div>
 </body>

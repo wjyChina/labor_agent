@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import type { Config } from './config.js';
 import { AppError, Store, type ContextBudget, type Session, type Message } from './store.js';
 import { estimateRequestTokens, ResponsesProvider, ProviderError } from './provider.js';
-import { ToolExecutor, clip } from './tools.js';
+import { ToolExecutor } from './tools.js';
+import { toolOutputForContext } from './tool-output.js';
 import { beijingDate, estimateDeepSeekFlash } from './pricing.js';
 import type { HolidayCalendar } from './holiday-calendar.js';
 
@@ -33,6 +34,7 @@ Workspace: ${s.workspace}
 Platform: ${process.platform}. Shell: Bash (${this.tools.bashPath}). Paths passed to Bash should use forward slashes.
 
 The user or coordinating assistant talks to you in ordinary language, giving a goal, scope, constraints and acceptance criteria. Choose read/write/edit/bash autonomously as needed; do not ask them to select tools or perform work you can execute. Answer questions as questions, and do not treat a request for discussion as permission for unrelated edits.
+Keep tool output small: read relevant line ranges, filter searches, and write large logs/reports to authorized artifact paths instead of printing them. Long tool results are previewed in your context; use tool_result_get with their result_id and offset/limit for details. A preview is not full evidence. Do not rerun a command solely to retrieve its output. Keep final reports concise and reference evidence paths rather than repeating logs or large tables.
 Keep the task and its acceptance criteria in the conversation context. Apply explicit follow-up changes and review feedback to the same task. Do not silently invent, weaken or replace acceptance criteria. Ask a focused question when material information is missing and cannot be inferred from the workspace.
 During execution, if you encounter a material problem, dependency, failure, conflict, or decision that the user's plan or instructions do not address, pause before choosing a remedy and ask the user a focused question. If you need to add a new approach or plan, or change or replace any approach the user specified, ask the user for confirmation before implementing that change. Do not silently choose or implement a workaround while waiting. Continue only work independent of the unresolved decision. Routine implementation details that stay within the user's approved plan and scope remain autonomous.
 New user messages may be guidance submitted while you were working. Treat the latest guidance as updates to the current task within its authorized scope, reconcile it with earlier instructions and adapt the plan before continuing. Some earlier tool calls may have been skipped so you can replan; skipped calls did not execute. Do not assume they changed any files. Completed operations remain in place.
@@ -219,13 +221,18 @@ Read relevant AGENTS.md instructions first. File tools are limited to the worksp
           try {
             signal.throwIfAborted();
             args = JSON.parse(call.arguments); message.args = args;
-            output = await this.tools.execute(call.name, args, s.workspace, signal); message.state = 'done';
+            output = await this.tools.execute(call.name, args, s.workspace, signal, id => {
+              const archived = s.messages.find(m => m.id === id && m.role === 'tool' && m.state !== 'running');
+              if (!archived) throw new Error('当前会话中不存在已完成的工具结果。');
+              return archived.text;
+            }); message.state = 'done';
           } catch (e) {
             output = `工具错误：${e instanceof Error ? e.message : String(e)}`; message.state = 'error';
           }
           // Close every call, even after cancellation, to keep resumed history valid.
-          message.text = clip(output);
-          s.history.push({ type: 'function_call_output', call_id: call.call_id, output: message.text });
+          message.text = output;
+          s.history.push({ type: 'function_call_output', call_id: call.call_id,
+            output: toolOutputForContext(call.name, output, message.id, c.toolContextChars) });
           this.store.save(s);
         }
         signal.throwIfAborted();

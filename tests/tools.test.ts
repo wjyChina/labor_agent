@@ -40,11 +40,25 @@ test('bash uses workspace, captures unicode, limits output, times out and cancel
     assert.equal(fs.readFileSync(path.join(f.workspace, 'result.txt'), 'utf8'), 'ok');
     const bounded = JSON.parse(await tools.execute('bash', { command: "yes x | head -c 100000" }, f.workspace, signal));
     assert.equal(bounded.truncated, true); assert.ok(bounded.stdout.length <= 24000);
+    const tail = JSON.parse(await tools.execute('bash', { command: "printf HEAD; yes x | head -c 100000; printf ERROR_AT_TAIL >&2; printf TAIL; exit 3" }, f.workspace, signal));
+    assert.equal(tail.exit_code, 3); assert.equal(tail.truncation, 'head_tail');
+    assert.ok(tail.stdout.startsWith('HEAD')); assert.ok(tail.stdout.endsWith('TAIL'));
+    assert.equal(tail.stderr, 'ERROR_AT_TAIL');
     const timed = JSON.parse(await tools.execute('bash', { command: 'sleep 20', timeout_ms: 150 }, f.workspace, signal));
     assert.match(timed.error, /超时/);
     const controller = new AbortController();
     const work = tools.execute('bash', { command: 'sleep 20' }, f.workspace, controller.signal);
     setTimeout(() => controller.abort(), 150);
     await assert.rejects(work, /取消/);
+  } finally { f.cleanup(); }
+});
+
+test('default reads are narrow and explicit pages still reach later file lines', async () => {
+  const f = fixture(), tools = new ToolExecutor(f.config), signal = new AbortController().signal;
+  try {
+    fs.writeFileSync(path.join(f.workspace, 'long.txt'), Array.from({ length: 150 }, (_, i) => `row-${i + 1}`).join('\n'));
+    const first = await tools.execute('read', { path: 'long.txt' }, f.workspace, signal);
+    assert.match(first, /80: row-80/); assert.ok(!first.includes('81: row-81'));
+    assert.match(await tools.execute('read', { path: 'long.txt', offset: 81, limit: 1 }, f.workspace, signal), /81: row-81/);
   } finally { f.cleanup(); }
 });

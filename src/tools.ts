@@ -11,6 +11,7 @@ const schemas = {
   write: z.object({ path: z.string().min(1), content: z.string().max(2_000_000), overwrite: z.boolean().optional() }).strict(),
   edit: z.object({ path: z.string().min(1), old_text: z.string().min(1), new_text: z.string(), replace_all: z.boolean().optional() }).strict(),
   bash: z.object({ command: z.string().min(1).max(100000), timeout_ms: z.number().int().min(100).max(300000).optional() }).strict(),
+  tool_result_get: z.object({ result_id: z.string().uuid(), offset: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(8000).optional() }).strict(),
 };
 const field = (type: string, description: string) => ({ type, description });
 function definition(name: string, description: string, properties: object, required: string[]) {
@@ -19,7 +20,7 @@ function definition(name: string, description: string, properties: object, requi
 }
 export const toolDefinitions = [
   definition('read', 'Read a UTF-8 file with line numbers, or list a directory. Paths are relative to the session workspace.', {
-    path: field('string', 'File or directory path'), offset: field('integer', 'First line, 1-based; default 1'), limit: field('integer', 'Maximum lines; default 300, maximum 2000'),
+    path: field('string', 'File or directory path'), offset: field('integer', 'First line, 1-based; default 1'), limit: field('integer', 'Maximum lines; default 80, maximum 2000. Read only the relevant range.'),
   }, ['path']),
   definition('write', 'Create a UTF-8 file. Existing files require overwrite=true. Creates parent directories.', {
     path: field('string', 'File path'), content: field('string', 'Complete file contents'), overwrite: field('boolean', 'Explicitly allow overwriting an existing file; default false'),
@@ -30,6 +31,10 @@ export const toolDefinitions = [
   definition('bash', 'Execute a Bash command in the session workspace. Real OS access, not a sandbox. Use for search, tests and builds. Output is bounded; timeout defaults to 60s (maximum 300s).', {
     command: field('string', 'Bash command'), timeout_ms: field('integer', 'Timeout in milliseconds'),
   }, ['command']),
+  definition('tool_result_get', 'Read a page of a captured tool result from this session by result_id returned in a preview. Do not rerun commands to recover output. Capture limits still apply.', {
+    result_id: field('string', 'Result ID from a tool preview'), offset: field('integer', 'Character offset, 0-based; default 0'),
+    limit: field('integer', 'Maximum text characters; default 4000, maximum 8000'),
+  }, ['result_id']),
 ];
 
 export function clip(s: string, max = MAX_TEXT) {
@@ -69,9 +74,19 @@ export class ToolExecutor {
       throw new Error('文件工具不读取或修改 .env / agent 内部数据。');
     return target;
   }
-  async execute(name: string, args: unknown, root: string, signal: AbortSignal): Promise<string> {
+  async execute(name: string, args: unknown, root: string, signal: AbortSignal,
+    readResult?: (id: string) => string): Promise<string> {
     signal.throwIfAborted();
     if (!(name in schemas)) throw new Error(`未知工具：${name}`);
+    if (name === 'tool_result_get') {
+      const a = schemas.tool_result_get.parse(args);
+      if (!readResult) throw new Error('当前工具调用没有关联会话。');
+      const text = readResult(a.result_id), offset = a.offset ?? 0, limit = a.limit ?? 4000;
+      if (offset > text.length) throw new Error(`offset 超出结果长度（${text.length} 字符）。`);
+      const page = text.slice(offset, offset + limit), next = offset + page.length;
+      return JSON.stringify({ result_id: a.result_id, offset, total_chars: text.length, text: page,
+        has_more: next < text.length, ...(next < text.length ? { next_offset: next } : {}) });
+    }
     if (name === 'bash') {
       const a = schemas.bash.parse(args);
       return this.bash(a.command, root, a.timeout_ms || 60000, signal);
@@ -90,7 +105,7 @@ export class ToolExecutor {
         const content = fs.readFileSync(target, 'utf8');
         if (content.includes('\0')) throw new Error('这不是 UTF-8 文本文件。');
         const lines = content.split(/\r?\n/), start = (a.offset || 1) - 1;
-        return clip(lines.slice(start, start + (a.limit || 300)).map((line, i) => `${start + i + 1}: ${line}`).join('\n')) + `\n[共 ${lines.length} 行]`;
+        return clip(lines.slice(start, start + (a.limit || 80)).map((line, i) => `${start + i + 1}: ${line}`).join('\n')) + `\n[共 ${lines.length} 行]`;
       }
       if (name === 'write') {
         if (fs.existsSync(target) && !a.overwrite) throw new Error('文件已存在；覆盖需要 overwrite=true。');
@@ -122,8 +137,10 @@ export class ToolExecutor {
       });
       let stdout = '', stderr = '', truncated = false, reason = '';
       const append = (current: string, chunk: string) => {
-        if (current.length + chunk.length > MAX_TEXT) truncated = true;
-        return (current + chunk).slice(0, MAX_TEXT);
+        const combined = current + chunk;
+        if (combined.length <= MAX_TEXT) return combined;
+        truncated = true;
+        return combined.slice(0, MAX_TEXT / 2) + combined.slice(-MAX_TEXT / 2);
       };
       child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
       child.stdout.on('data', s => { stdout = append(stdout, s); });
@@ -141,7 +158,8 @@ export class ToolExecutor {
       child.on('error', e => { cleanup(); reject(new Error(`无法运行 Bash（${this.bashPath}）：${e.message}`)); });
       child.on('close', (code, sig) => {
         cleanup();
-        const result = JSON.stringify({ exit_code: code, signal: sig, stdout, stderr, truncated, ...(reason ? { error: reason } : {}) });
+        const result = JSON.stringify({ exit_code: code, signal: sig, stdout, stderr, truncated,
+          ...(truncated ? { truncation: 'head_tail' } : {}), ...(reason ? { error: reason } : {}) });
         if (signal.aborted) reject(new Error('命令已取消'));
         else resolve(result);
       });

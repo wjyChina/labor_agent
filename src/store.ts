@@ -10,18 +10,22 @@ export type Message = {
   time: string; source?: 'mcp' | 'web'; tool?: string; args?: unknown;
   state?: 'running' | 'done' | 'error' | 'skipped';
   kind?: 'guidance'; delivery?: 'queued' | 'applied';
+  nativeId?: string;
 };
 export type ContextBudget = {
   limitTokens: number; warnRatio: number; estimatedInputTokens: number;
   reservedOutputTokens: number; estimatedRequestTokens: number; ratio: number;
   status: 'ok' | 'warning' | 'exceeded'; source: 'estimate' | 'provider'; updatedAt: string;
 };
+export type ExecutionDefaults = { backend: 'deepseek' | 'codex'; profileId?: string; model?: string };
+export type CodexBinding = { profileId: string; model: string; threadId?: string; syncedItemIds?: string[] };
 export type Session = {
   id: string; title: string; workspace: string; createdAt: string; updatedAt: string;
   status: 'idle' | 'running' | 'error' | 'cancelled';
   messages: Message[]; history: ApiItem[]; previousResponseId?: string;
   responseCursor?: number; providerKey?: string; error?: string;
   contextBudget?: ContextBudget;
+  backend?: 'deepseek' | 'codex'; providerId?: string; model?: string; codex?: CodexBinding;
   usage: { input: number; output: number; cached: number; estimatedCosts?: Record<string, EstimatedCost> };
 };
 
@@ -42,6 +46,7 @@ export class Store extends EventEmitter {
   sessions = new Map<string, Session>();
   activeSessionId: string | null = null;
   holidayOverrideDate: string | null = null;
+  executionDefaults: ExecutionDefaults = { backend: 'deepseek' };
   constructor(public dir: string) {
     super();
     fs.mkdirSync(path.join(dir, 'sessions'), { recursive: true });
@@ -66,6 +71,8 @@ export class Store extends EventEmitter {
     if (fs.existsSync(state)) {
       const saved = JSON.parse(fs.readFileSync(state, 'utf8'));
       this.activeSessionId = saved.activeSessionId;
+      if (saved.executionDefaults?.backend === 'deepseek' || saved.executionDefaults?.backend === 'codex')
+        this.executionDefaults = saved.executionDefaults;
       if (typeof saved.holidayOverrideDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(saved.holidayOverrideDate))
         this.holidayOverrideDate = saved.holidayOverrideDate;
     }
@@ -76,12 +83,17 @@ export class Store extends EventEmitter {
     if (!s) throw new AppError('请先创建或选择会话。', 404);
     return s;
   }
-  create(workspace: string, title = '新会话') {
+  create(workspace: string, title = '新会话', execution?: ExecutionDefaults) {
     const root = fs.realpathSync(workspace);
     if (!fs.statSync(root).isDirectory()) throw new AppError('工作目录必须是文件夹。');
     const s: Session = { id: randomUUID(), title, workspace: root,
       createdAt: now(), updatedAt: now(), status: 'idle', messages: [], history: [],
       usage: { input: 0, output: 0, cached: 0 } };
+    s.backend = execution?.backend || 'deepseek';
+    if (s.backend === 'codex') {
+      if (!execution?.profileId || !execution.model) throw new AppError('请先选择 Codex 账号和模型。');
+      s.codex = { profileId: execution.profileId, model: execution.model };
+    } else { s.providerId = execution?.profileId; s.model = execution?.model; }
     this.sessions.set(s.id, s); this.save(s); this.select(s.id); return s;
   }
   select(id: string) {
@@ -95,9 +107,11 @@ export class Store extends EventEmitter {
     this.saveState();
   }
   isHolidayOverride(date: string) { return this.holidayOverrideDate === date; }
+  setExecutionDefaults(value: ExecutionDefaults) { this.executionDefaults = value; this.saveState(); this.emit('change', {}); }
   private saveState() {
     atomicWrite(path.join(this.dir, 'state.json'), JSON.stringify({
       activeSessionId: this.activeSessionId, holidayOverrideDate: this.holidayOverrideDate,
+      executionDefaults: this.executionDefaults,
     }));
   }
   save(s: Session) {
@@ -110,12 +124,15 @@ export class Store extends EventEmitter {
   }
   list() {
     return [...this.sessions.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      .map(({ id, title, workspace, createdAt, updatedAt, status, usage, contextBudget }) =>
-        ({ id, title, workspace, createdAt, updatedAt, status, usage, contextBudget }));
+      .map(({ id, title, workspace, createdAt, updatedAt, status, usage, contextBudget, backend, providerId, model, codex }) =>
+        ({ id, title, workspace, createdAt, updatedAt, status, usage, contextBudget, backend: backend || 'deepseek', providerId, model,
+          ...(codex ? { codex: { profileId: codex.profileId, model: codex.model, threadId: codex.threadId } } : {}) }));
   }
   view(s: Session) {
-    const { history, providerKey, responseCursor, ...visible } = s;
+    const { history, providerKey, responseCursor, codex, ...visible } = s;
     return { ...visible, historyItems: history.length,
+      backend: s.backend || 'deepseek',
+      ...(codex ? { codex: { profileId: codex.profileId, model: codex.model, threadId: codex.threadId } } : {}),
       pendingGuidance: s.messages.filter(m => m.kind === 'guidance' && m.delivery === 'queued').length };
   }
 }

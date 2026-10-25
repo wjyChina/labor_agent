@@ -30,7 +30,7 @@ npm run build
 npm start
 ```
 
-服务启动后会自动打开默认浏览器；如果没有自动打开，可访问 <http://127.0.0.1:3210>。也可以运行 `./start.ps1` 自动准备依赖并启动。界面只显示会话列表、对话和输入框，可以手动选择已有会话、发送消息、在执行中引导或停止。**新会话仅由 AI 通过 MCP 的 `session_create` 建立**，网页不提供新建入口，也不会首次发送时自动创建。每个会话可由 AI 指定独立工作目录。
+服务启动后会自动打开默认浏览器；如果没有自动打开，可访问 <http://127.0.0.1:3210>。也可以运行 `./start.ps1` 自动准备依赖并启动。界面显示会话列表、对话和输入框，可以手动选择已有会话、发送消息、在执行中引导或停止。左下角“执行账号与模型”用于统一选择 DeepSeek API 或 Codex 订阅；DeepSeek 的地址、模型和 API Key 可在页面保存为多个配置并切换，Codex 账号和模型也在这里管理。左侧“＋”只负责新建 session 和选择项目文件夹，之后自动继承全局执行配置。MCP 仍可通过 `session_create` 建立会话。
 
 后台运行和管理：
 
@@ -59,9 +59,14 @@ npm run stop
 | `LABOR_MAX_OUTPUT_TOKENS` | `32768` | 每次模型响应的输出上限（包含推理） |
 | `LABOR_CONTEXT_LIMIT_TOKENS` | `1048576` | 上下文预算上限；DeepSeek Flash 默认按 1M 实测上限，其他模型或网关应覆盖 |
 | `LABOR_CONTEXT_WARN_RATIO` | `0.9` | 发起请求前的上下文预警阈值；达到后本轮请求会被拦截 |
+| `LABOR_TOOL_CONTEXT_CHARS` | `4000` | 普通工具结果进入模型上下文的最大字符数；完整捕获结果仍保存在会话记录中 |
 | `LABOR_REQUEST_TIMEOUT_MS` | `180000` | 单次 API 请求超时，毫秒 |
+| `LABOR_CODEX_COMMAND` | `codex` | 可选的 Codex CLI 命令或路径 |
+| `LABOR_CODEX_HOME` | `.labor-agent/codex-accounts/default` | Labor Agent 独立 Codex 登录目录 |
+| `LABOR_CODEX_SQLITE_HOME` | `~/.codex` | 与 Codex 客户端共享线程索引的 SQLite 目录 |
+| `LABOR_CODEX_DIRECT` | `false` | 是否清理代理环境后启动 Codex |
 
-`.env` 从本项目根目录读取，与 MCP 客户端当前目录无关。相对路径也以本项目根目录解析；创建会话时提供的相对目录以默认工作目录解析。进程环境变量优先于 `.env`。修改 API、模型或端口需要重启服务；修改端口或数据目录后还需要重新加载 MCP 客户端。不会自动读取 Harness 的密钥。
+`.env` 从本项目根目录读取，与 MCP 客户端当前目录无关。相对路径也以本项目根目录解析；创建会话时提供的相对目录以默认工作目录解析。进程环境变量优先于 `.env`。页面保存的 DeepSeek 配置位于 `.labor-agent/provider-profiles.json`，新建 session 会绑定当前配置；已有 session 保留创建时的配置。修改 `.env`、端口或数据目录需要重启服务；页面保存的账号切换立即对之后新建的 session 生效。不会自动读取 Harness 的密钥。
 
 ## 在 Codex 中使用 MCP
 
@@ -88,7 +93,7 @@ npm run setup:mcp
 | MCP 工具 | 用途 |
 | --- | --- |
 | `agent_start` | 启动/连接后台，返回运行状态、模型和配置状态；服务启动时自动打开界面 |
-| `session_create` | 创建并选择会话，可传 `title`、`workspace` |
+| `session_create` | 创建并选择会话，可传 `title`、`workspace`、`backend`、`profile_id`、`model` |
 | `session_list` | 列出会话和当前选择 |
 | `session_select` | 用 `session_id` 切换当前默认会话；普通协作显式传 `session_id` 即可 |
 | `session_get` | 读取对话和工具记录；工具结果默认只给摘要，可按角色过滤、向前分页，或按消息 ID 读取完整内容 |
@@ -141,11 +146,12 @@ npm run setup:skill
 
 协作过程：Codex 用 `agent_send.text` 说清目标、范围、验收标准；Labor Agent 自主选择工具并执行，回复逐条验证结果和证据；Codex 读取记录并核验真实文件与必要行为，再用普通对话追问或反馈修改。没有额外的工具选择、任务类型表单或强制 JSON 任务协议。
 
-验收标准保存在对话上下文中，后续可明确变更；未执行的检查需标记为未验证。`idle` 只表示本轮结束，不能直接当成验收通过。协作时应保存并显式传 `session_id`，避免网页切换会话后任务被发到其他会话。
+验收标准保存在对话上下文中，后续可明确变更；未执行的检查需标记为未验证。`idle` 只表示本轮结束，不能直接当成验收通过。默认一个 session 对应一个任务或交付阶段；补充、验收修正和恢复沿用原会话，阶段验收完成后，即使同项目也为下一任务创建新 session，只交接关键要求、验收标准和成果路径，避免复制全部历史。该规则由 MCP/skill 引导协调者执行，不会自动判断阶段或切换正在运行的会话。协作时应保存并显式传 `session_id`，避免网页切换会话后任务被发到其他会话。
 
 ## 上下文和缓存
 
-- **DeepSeek 默认 `local`**：每轮将完整的 Responses input/output（包括 reasoning、工具调用和结果）持久保存，后续请求完整续传。重启后台后可以继续旧会话。
+- **DeepSeek 默认 `local`**：持久保存并续传 Responses 模型历史（包括 reasoning、工具调用和工具结果预览）；工具完整捕获结果另外保存在会话消息中供网页/MCP 查阅。重启后台后可以继续旧会话。
+- **工具结果按需读取**：普通工具结果默认最多向模型提供 4,000 字符预览；Bash 保留退出码、错误和输出首尾。Labor 内部可用 `tool_result_get` 按 `result_id`、字符 `offset` 和 `limit` 分页读取会话记录，不必重新执行命令。默认每页 4,000、最大 8,000 字符；显式详情页不再二次裁切。新结果只追加到历史，已有历史与调用配对不改写，保护前缀缓存和 `previous_response_id`。没有额外模型总结调用，历史大结果也不会被自动瘦身。
 - **服务端前缀缓存**由 DeepSeek 自动管理；界面按接口返回的用量显示每个 session 的缓存命中量和命中率（缓存命中输入 token ÷ 输入 token）。保存历史不代表每轮免计费。
 - 网页按 session 展示 DeepSeek Flash 的人民币费用估算，底层按每次请求的峰谷时段累计 USD 价格，再按每日更新的 [USD/CNY 中间汇率](https://frankfurter.dev/)折算；汇率更新后已累计 session 的人民币显示也会变化。缓存命中属于输入 token 的子集。中国法定节假日从 [Hi8 节假日 API](https://hi8.com/t/jiejiari-api) 自动同步到本地缓存，服务启动时立即检查并每日更新；同步失败保留上次数据，网页仍可手动标记。升级前缺少分时记录的历史用量及其他模型不计入估算。价格使用[DeepSeek 官方费率](https://api-docs.deepseek.com/quick_start/pricing/)，估算不等同于服务商账单。
 - **`previous_response_id`**：仅供支持服务端上下文的网关；仅发送新增项，并继续发送系统指令。服务端明确报告 ID 失效时，回退到本地完整历史；更换模型、地址或密钥时重置 ID。
@@ -155,10 +161,11 @@ npm run setup:skill
 
 ## 工具行为与运行范围
 
-- `read`：读取 UTF-8 文件或列目录，可按行分页，有输出大小上限。
+- `read`：读取 UTF-8 文件或列目录，默认 80 行，可按 `offset`/`limit` 分页，有输出大小上限。
 - `write`：创建文件和父目录，覆盖已有文件必须显式传 `overwrite=true`。
 - `edit`：精确文本替换；多处匹配默认报错，可传 `replace_all=true`；保留 CRLF/LF 和已有文件权限。
-- `bash`：真实 Bash，默认 60 秒，最多 300 秒；捕获 stdout、stderr、退出码，限制输出；停止时结束命令进程树。
+- `bash`：真实 Bash，默认 60 秒，最多 300 秒；stdout/stderr 各最多捕获 24,000 字符，超量时保留首尾并标记 `truncated`/`head_tail`；大日志应重定向到授权文件。停止时结束命令进程树。
+- `tool_result_get`：Labor 内部工具，只能读取当前 session 已捕获的工具结果。`result_id` 为预览中的结果 ID；`offset` 是从 0 开始的字符位置，返回 `next_offset`/`has_more` 供继续分页。捕获上限仍然适用，超出捕获上限的原始日志应从成果文件读取。
 
 文件工具限制在当前会话工作目录内，拒绝路径穿越、目录外的符号链接、`.env` 和 agent 内部数据。Bash 使用当前用户的系统权限，**不是安全沙箱**，可访问工作目录之外；启动子进程时去掉继承的 API Key、Token、Secret 等环境变量，但这不阻止命令读取磁盘文件。会话与工具结果以明文保存在本机，只应给可信客户端和指令使用。
 

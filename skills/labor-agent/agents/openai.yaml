@@ -1,4 +1,4 @@
 interface:
   display_name: "Labor Agent 协作"
-  short_description: "通过 MCP 委派任务，等待完成并验收；服务启动时自动打开网页"
-  default_prompt: "使用 $labor-agent 判断任务是否值得委派；适合时先规划并通过 Labor Agent MCP 派发，必须用 agent_await（当前 MCP 名为 agent_wait）等到终态后再验收。日常协作只用 MCP，不打开或操作网页。"
+  short_description: "通过 MCP 委派并验收；完成阶段后新建会话，工具详情按需读取"
+  default_prompt: "使用 $labor-agent 判断任务是否值得委派；适合时先规划并通过 MCP 派发，用 agent_wait 等到终态后验收。同一任务修正沿用会话，验收完成后的新任务或阶段新建 session，只交接关键要求和成果路径。大工具结果按需分页读取，避免重跑取日志。日常协作只用 MCP，不打开或操作网页。"
