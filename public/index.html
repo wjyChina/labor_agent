@@ -67,6 +67,9 @@
       <div class="field-with-button"><select class="field-input" id="settings-codex-profile"></select><button class="secondary-button" id="settings-codex-login" type="button">登录</button><button class="secondary-button" id="settings-codex-add" type="button">添加账号</button></div>
       <label class="field-label" for="settings-codex-model">Codex 模型</label><select class="field-input" id="settings-codex-model"></select>
       <p class="field-hint" id="settings-codex-help">登录后从 Codex CLI 读取可用模型。</p>
+      <label class="field-label" for="settings-codex-permission">Codex 文件权限</label>
+      <select class="field-input" id="settings-codex-permission"><option value="danger-full-access">完整权限（默认）</option><option value="workspace-write">仅项目目录可写</option><option value="read-only">只读</option></select>
+      <p class="field-hint">完整权限允许 Codex 访问本机文件和执行命令；项目写入模式会限制在当前项目目录。</p>
       <div class="dialog-actions provider-actions"><button class="primary" id="codex-use" type="button">保存并使用 Codex</button></div>
     </section>
     <p class="field-error hidden" id="settings-error"></p>

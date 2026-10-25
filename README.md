@@ -66,7 +66,7 @@ npm run stop
 | `LABOR_CODEX_SQLITE_HOME` | `~/.codex` | 与 Codex 客户端共享线程索引的 SQLite 目录 |
 | `LABOR_CODEX_DIRECT` | `true` | 是否清理代理环境后启动 Codex；本机有可用代理时可设为 `false` |
 
-`.env` 从本项目根目录读取，与 MCP 客户端当前目录无关。相对路径也以本项目根目录解析；创建会话时提供的相对目录以默认工作目录解析。进程环境变量优先于 `.env`。页面保存的 DeepSeek 配置位于 `.labor-agent/provider-profiles.json`，新建 session 会绑定当前配置；已有 session 保留创建时的配置。修改 `.env`、端口或数据目录需要重启服务；页面保存的账号切换立即对之后新建的 session 生效。不会自动读取 Harness 的密钥。
+`.env` 从本项目根目录读取，与 MCP 客户端当前目录无关。相对路径也以本项目根目录解析；创建会话时提供的相对目录以默认工作目录解析。进程环境变量优先于 `.env`。页面保存的 DeepSeek 配置位于 `.labor-agent/provider-profiles.json`，新建 session 会绑定当前配置；已有 session 保留创建时的配置。Codex 的文件权限模式也在左下角设置中保存，默认是完整权限，可切换为项目写入或只读。修改 `.env`、端口或数据目录需要重启服务；页面保存的账号切换立即对之后新建的 session 生效。不会自动读取 Harness 的密钥。
 
 ## 在 Codex 中使用 MCP
 

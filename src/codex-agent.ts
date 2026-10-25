@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { CodexAccounts } from './codex-accounts.js';
 import type { CodexRpc } from './codex-rpc.js';
-import { AppError, now, Store, type Message, type Session } from './store.js';
+import { AppError, now, Store, type CodexSandbox, type Message, type Session } from './store.js';
 
 type Run = { promise: Promise<void>; cancelled: boolean; client?: CodexRpc; turnId?: string;
   finish?: (turn: any) => void; pendingUserId?: string; steering?: Promise<void>; question?: string };
@@ -11,6 +11,13 @@ export class CodexAgent {
   private lastSync = new Map<string, number>();
   private syncing = new Map<string, Promise<void>>();
   constructor(readonly accounts: CodexAccounts, private store: Store) {}
+  private sandboxPolicy(s: Session) {
+    const mode: CodexSandbox = s.codex?.sandbox || 'danger-full-access';
+    if (mode === 'danger-full-access') return { type: 'dangerFullAccess' };
+    if (mode === 'read-only') return { type: 'readOnly', networkAccess: false };
+    return { type: 'workspaceWrite', writableRoots: [s.workspace], networkAccess: false,
+      excludeTmpdirEnvVar: false, excludeSlashTmp: false };
+  }
   private validate(text: string) { if (!text.trim() || text.length > 100000) throw new AppError('消息长度必须在 1–100000 字符之间。'); }
   private queued(s: Session) { return s.messages.filter(m => m.kind === 'guidance' && m.delivery === 'queued'); }
   start(s: Session, text: string, source: 'mcp' | 'web') {
@@ -140,6 +147,7 @@ export class CodexAgent {
         run.pendingUserId = input[0].id;
         const terminal = new Promise<any>(resolve => { run.finish = resolve; });
         const started = await client.request('turn/start', { threadId: s.codex!.threadId, model: model.model,
+          cwd: s.workspace, approvalPolicy: 'never', sandboxPolicy: this.sandboxPolicy(s),
           ...(model.defaultReasoningEffort ? { effort: model.defaultReasoningEffort } : {}),
           clientUserMessageId: input[0].id, input: input.map(m => ({ type: 'text', text: m.text, text_elements: [] })) });
         initial = false; queued.forEach(m => { m.delivery = 'applied'; }); run.turnId = started.turn.id; this.store.save(s);

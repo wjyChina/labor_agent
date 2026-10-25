@@ -182,12 +182,13 @@ app.post('/api/providers', (req, res) => {
 });
 app.delete('/api/providers/:id', (req, res) => { providerProfiles.remove(req.params.id); res.json({ ok: true }); });
 app.post('/api/providers/:id/delete', (req, res) => { providerProfiles.remove(req.params.id); res.json({ ok: true }); });
-const executionSchema = z.object({ backend: z.enum(['deepseek', 'codex']), profile_id: z.string().optional(), model: z.string().optional() });
+const executionSchema = z.object({ backend: z.enum(['deepseek', 'codex']), profile_id: z.string().optional(), model: z.string().optional(),
+  codex_sandbox: z.enum(['danger-full-access', 'workspace-write', 'read-only']).optional() });
 app.post('/api/execution/select', async (req, res) => {
   const value = executionSchema.parse(req.body);
   const execution = value.backend === 'deepseek'
     ? await providerProfiles.binding({ backend: 'deepseek', profileId: value.profile_id, model: value.model })
-    : await codexAccounts.binding({ backend: 'codex', profileId: value.profile_id, model: value.model });
+    : await codexAccounts.binding({ backend: 'codex', profileId: value.profile_id, model: value.model, codexSandbox: value.codex_sandbox || store.executionDefaults.codexSandbox });
   store.setExecutionDefaults(execution); res.json({ executionDefaults: execution });
 });
 app.get('/api/codex', async (_req, res) => {
@@ -204,10 +205,10 @@ app.post('/api/codex/:id/login', async (req, res) => { res.json(await codexAccou
 app.post('/api/codex/:id/logout', async (req, res) => { await codexAccounts.logout(req.params.id); res.json({ ok: true }); });
 app.post('/api/codex/:id/refresh', async (req, res) => { res.json(await codexAccounts.describe(req.params.id, true)); });
 app.post('/api/codex/defaults', async (req, res) => {
-  const value = z.object({ backend: z.enum(['deepseek', 'codex']), profile_id: z.string().optional(), model: z.string().optional() }).parse(req.body);
+  const value = executionSchema.parse(req.body);
   const execution = value.backend === 'deepseek'
     ? await providerProfiles.binding({ backend: 'deepseek', profileId: value.profile_id, model: value.model })
-    : await codexAccounts.binding({ backend: 'codex', profileId: value.profile_id, model: value.model });
+    : await codexAccounts.binding({ backend: 'codex', profileId: value.profile_id, model: value.model, codexSandbox: value.codex_sandbox || store.executionDefaults.codexSandbox });
   store.setExecutionDefaults(execution); res.json({ executionDefaults: execution });
 });
 app.post('/api/pricing/holiday-override', (req, res) => {

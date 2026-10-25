@@ -47,6 +47,7 @@ function renderCodexSettings() {
   for (const model of profile?.models || []) { const option = node('option', '', model.displayName || model.model); option.value = model.model; modelSelect.append(option); }
   const chosenModel = profile?.models?.find(model => model.model === previousModel) || profile?.models?.find(model => model.model === defaults.model) || profile?.models?.find(model => model.isDefault) || profile?.models?.[0];
   if (chosenModel) modelSelect.value = chosenModel.model;
+  $('settings-codex-permission').value = defaults.codexSandbox || 'danger-full-access';
   $('settings-codex-help').textContent = settingsState?.codex?.available
     ? (profile?.loggedIn ? '模型列表来自当前 Codex 账号。' : '该账号尚未登录，请点击登录。')
     : (settingsState?.codex?.error || '未找到 Codex CLI。');
@@ -94,7 +95,9 @@ async function addSettingsCodex() {
 async function useCodex() {
   const profile = selectedSettingsCodexProfile(), model = $('settings-codex-model').value;
   if (!profile?.loggedIn || !model) throw new Error('请先登录 Codex 并选择模型。');
-  await selectExecution('codex', profile.id, model); toast('Codex 已保存并启用。');
+  await api('/api/execution/select', { backend: 'codex', profile_id: profile.id, model,
+    codex_sandbox: $('settings-codex-permission').value });
+  settingsState = await loadSettings(true); await refresh(); renderSettings(); toast('Codex 已保存并启用。');
 }
 async function openNewSessionDialog() {
   $('new-session-error').classList.add('hidden'); $('new-session-title').value = '';

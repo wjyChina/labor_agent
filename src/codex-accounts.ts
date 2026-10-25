@@ -140,7 +140,7 @@ export class CodexAccounts {
     const model = value.model ? state.models.find(m => m.model === value.model || m.id === value.model)
       : state.models.find(m => m.isDefault) || state.models[0];
     if (!model) throw new AppError('Codex 模型未找到，请刷新模型列表后重新选择。');
-    return { backend: 'codex', profileId: id, model: model.model };
+    return { backend: 'codex', profileId: id, model: model.model, codexSandbox: value.codexSandbox || 'danger-full-access' };
   }
   async model(id: string, name: string) {
     const state = await this.refresh(id);
