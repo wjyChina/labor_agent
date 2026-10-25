@@ -29,7 +29,7 @@ const schema = z.object({
   LABOR_CODEX_COMMAND: z.string().default('codex'),
   LABOR_CODEX_HOME: z.string().optional(),
   LABOR_CODEX_SQLITE_HOME: z.string().optional(),
-  LABOR_CODEX_DIRECT: z.enum(['true', 'false']).default('false'),
+  LABOR_CODEX_DIRECT: z.enum(['true', 'false']).default('true'),
 });
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
