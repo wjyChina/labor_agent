@@ -36,11 +36,11 @@ description: 与 Labor Agent/labor_agent 协作时，仅委派适合的复杂代
 ## 接入与会话
 
 - 发现 `labor_agent` MCP 的 `agent_start`、`session_list`、`session_create`、`session_select`、`agent_send`、`agent_status`、`agent_wait`、`session_get`、`agent_cancel`。工具名称可能带客户端前缀，按实际可用名称调用。
-- `agent_start` 返回网页地址、工作目录、模型和 `configured`。没有密钥时说明需在项目 `.env` 配置 `LABOR_API_KEY` 并重启；不要求用户在对话中粘贴密钥。默认本地项目为 `D:/codes/labor_agent`，以实际配置/用户指定位置为准。
-- 本次协作首次连接后，客户端具备打开网页能力时，自动打开或复用 `agent_start` 返回的本地网页地址，让用户观察对话与执行。Codex 中可用 `open_in_codex` 的 browser 目标；使用其他客户端时采用其可用的浏览器能力。已有同地址页面就复用，不在每次查询状态时重复打开；选定会话后用 `session_select` 同步网页。客户端无法打开页面时提供链接，不声称页面已打开。MCP 本身只返回地址，不会强制启动系统浏览器。
+- 本地网页由 Labor Agent 服务在启动时自动打开。Codex 与 Labor Agent 的日常协作必须使用 MCP 工具；不要由 AI 打开网页、点击界面、通过网页发送任务或轮询状态。只有用户明确要求检查或操作网页界面时才使用浏览器工具。
+- `agent_start` 返回服务状态、模型和 `configured`，不需要打开网页。没有密钥时说明需在项目 `.env` 配置 `LABOR_API_KEY` 并重启；不要求用户在对话中粘贴密钥。默认本地项目为 `D:/codes/labor_agent`，以实际配置/用户指定位置为准。
 - 若当前聊天尚未加载 MCP，说明需要在项目执行 `npm run build`、`npm run setup:mcp`，然后重新加载项目或会话。不要把自己直接做的工作描述成 Labor Agent 的结果。
 - 继续任务时先查 `session_list`，必要时用 `session_get` 确认上下文与目录；使用已有的相关会话。新任务没有适合的会话时由你用 `session_create` 创建，明确传目标项目的 `workspace`。网页不提供会话创建，也不会在首次发送时自动创建，不要求用户在网页点“新建会话”。
-- 记录返回的会话 ID，后续 `agent_send`、`agent_status`、`agent_wait`、`session_get`、`agent_cancel` 都显式传 `session_id`。网页或其他客户端可能改变当前选择，不能依赖全局活动会话。需要让网页展示该会话时用 `session_select`。
+- 记录返回的会话 ID，后续 `agent_send`、`agent_status`、`agent_wait`、`session_get`、`agent_cancel` 都显式传 `session_id`，不要依赖全局活动会话。普通任务不调用 `session_select` 来同步网页；只有用户明确要求切换界面当前会话时才调用它。
 
 ## 用对话派发和跟进
 

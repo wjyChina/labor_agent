@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import express from 'express';
 import { z } from 'zod';
@@ -49,6 +50,20 @@ const agent = new Agent(config, store, holidayCalendar);
 const sessionCreationToken = mcpToken(config);
 const app = express(); app.disable('x-powered-by');
 const origin = baseUrl(config), localOrigin = `http://localhost:${config.port}`;
+function openLocalUi(url: string) {
+  let command: string, args: string[];
+  if (process.platform === 'win32') {
+    command = process.env.ComSpec || 'cmd.exe';
+    args = ['/d', '/s', '/c', `start "" "${url}"`];
+  } else if (process.platform === 'darwin') {
+    command = 'open'; args = [url];
+  } else {
+    command = 'xdg-open'; args = [url];
+  }
+  const child = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true });
+  child.once('error', error => console.error(`无法自动打开 Labor Agent 网页：${error.message}`));
+  child.unref();
+}
 app.use((req, res, next) => {
   if (![new URL(origin).host, new URL(localOrigin).host].includes(req.headers.host || ''))
     return res.status(403).json({ error: '仅允许本机地址访问。' });
@@ -172,6 +187,7 @@ app.use((error: any, _req: express.Request, res: express.Response, _next: expres
 });
 const server = app.listen(config.port, '127.0.0.1', () => {
   console.log(`Labor Agent: ${origin}\nWorkspace: ${config.workspace}\nModel: ${config.model}\nAPI key: ${config.apiKey ? 'configured' : 'not configured'}`);
+  openLocalUi(origin);
 });
 holidayCalendar.start();
 exchangeRate.start();

@@ -7,7 +7,7 @@ import type { Message } from './store.js';
 
 const config = loadConfig();
 const server = new McpServer({ name: 'labor-agent', version: '0.1.0' }, {
-  instructions: 'Labor Agent is an autonomous local DeepSeek coding partner. When first connecting for a task, open or reuse the returned local UI URL in the client browser/panel if that capability is available, so the user can observe the work. Reuse an existing tab; never open new tabs on status polling. If the client cannot open a page, show the URL instead. Only AI clients create sessions via session_create; the browser has no creation control. Talk to it using agent_send: explain the goal, scope, constraints and acceptance criteria in ordinary language. It chooses its own tools. Reuse the same session and pass an explicit session_id; use session_select to show the intended session in the UI. For long tasks, set agent_send wait_ms to 55000. If it returns running, call agent_wait with wait_ms up to 55000; it returns as soon as the run ends or the timeout expires. Do not do unrelated preparation or repeatedly read the transcript while waiting. While running, agent_send queues new guidance instead of starting another run; only send it to correct direction or resolve a blocker, never as a wait command. Guidance is applied before the next model call; the active tool finishes and unstarted older calls are skipped so it can replan. Do not resubmit the original task when polling. Use agent_cancel to stop the active request/tool immediately. Prefer status and the final deliverable report; inspect recent process records only when needed, starting with the latest task turn. session_get returns compact tool-result previews by default; when a specific result is needed, call it again with that message ID in message_ids to fetch full text, and increase max_chars if it is truncated. Use before_message_id to page backwards and roles to filter. Then verify the outcome. idle means the turn ended, not acceptance passed. The UI shows both sides of this conversation.',
+  instructions: 'Labor Agent is an autonomous local DeepSeek coding partner. Use MCP tools for all ordinary task interaction; do not open or operate the local browser UI to send tasks, select sessions, poll status, or read transcripts. The backend opens the UI when the service starts. Create sessions with session_create, then pass an explicit session_id to MCP calls. Talk to it using agent_send: explain the goal, scope, constraints and acceptance criteria in ordinary language. It chooses its own tools. For long tasks, set agent_send wait_ms to 55000. If it returns running, call agent_wait with wait_ms up to 55000; if that times out while still running, keep waiting. Do not do unrelated preparation or repeatedly read the transcript while waiting. While running, agent_send queues new guidance instead of starting another run; only send it to correct direction or resolve a blocker, never as a wait command. Guidance is applied before the next model call; the active tool finishes and unstarted older calls are skipped so it can replan. Do not resubmit the original task when polling. Use agent_cancel to stop the active request/tool immediately. Prefer status and the final deliverable report; inspect recent process records only when needed, starting with the latest task turn. session_get returns compact tool-result previews by default; when a specific result is needed, call it again with that message ID in message_ids to fetch full text, and increase max_chars if it is truncated. Use before_message_id to page backwards and roles to filter. Then verify the outcome. idle means the turn ended, not acceptance passed. Only use browser tools when the user explicitly asks you to inspect or operate the UI.',
 });
 const sessionId = z.string().uuid().optional().describe('Session ID. Omit to use the currently selected session.');
 const annotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
@@ -87,7 +87,7 @@ async function sessionStatus(id: string, waitMs = 0) {
     : await request(config, `/api/sessions/${id}`);
   const formatted = formatMessages(s.messages.slice(-4), { full: false, maxChars: 3_000, toolPreviewChars: 250 });
   return {
-    ...sessionMetadata(s), messages: formatted.messages, ui: `http://127.0.0.1:${config.port}`,
+    ...sessionMetadata(s), messages: formatted.messages,
     ...(s.waitResult ? { waitResult: s.waitResult, waitedMs: s.waitedMs } : {}),
   };
 }
@@ -106,11 +106,14 @@ async function resolveId(id?: string) {
   return state.activeSessionId;
 }
 server.registerTool('agent_start', {
-  description: 'Start or connect to Labor Agent and return its local chat UI URL, model, configuration status and active session. If the client supports opening pages, open or reuse this URL for the user once per collaboration, not on each poll; otherwise show the link. No model API call is made.',
+  description: 'Start or connect to Labor Agent and return service status, model, configuration status and active session. The backend opens its UI when the service starts; use MCP tools for interaction. No model API call is made.',
   inputSchema: {}, annotations,
-}, () => call(() => request(config, '/api/health')));
+}, () => call(async () => {
+  const { url: _uiUrl, ...status } = await request(config, '/api/health');
+  return status;
+}));
 server.registerTool('session_create', {
-  description: 'Create and select a persistent session. Optionally choose a workspace directory. The UI switches to it immediately.',
+  description: 'Create and select a persistent session. Optionally choose a workspace directory. Pass its returned session_id to subsequent MCP calls.',
   inputSchema: { title: z.string().min(1).max(100).optional(), workspace: z.string().optional() }, annotations,
 }, args => call(() => request(config, '/api/sessions', args)));
 server.registerTool('session_list', {
@@ -118,7 +121,7 @@ server.registerTool('session_list', {
   inputSchema: {}, annotations: { ...annotations, readOnlyHint: true, idempotentHint: true },
 }, () => call(() => request(config, '/api/sessions')));
 server.registerTool('session_select', {
-  description: 'Select an existing session for subsequent instructions and show it in the shared UI.',
+  description: 'Select an existing session as the default for subsequent MCP calls. Ordinary task interactions should pass session_id explicitly.',
   inputSchema: { session_id: z.string().uuid() }, annotations,
 }, ({ session_id }) => call(() => request(config, `/api/sessions/${session_id}/select`, {})));
 server.registerTool('session_get', {
