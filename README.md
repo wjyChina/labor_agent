@@ -57,6 +57,8 @@ npm run stop
 | `LABOR_PORT` | `3210` | 本地网页 / 内部 HTTP API 端口 |
 | `LABOR_BASH_PATH` | 自动检测 | Bash 可执行文件路径 |
 | `LABOR_MAX_OUTPUT_TOKENS` | `32768` | 每次模型响应的输出上限（包含推理） |
+| `LABOR_CONTEXT_LIMIT_TOKENS` | `1048576` | 上下文预算上限；DeepSeek Flash 默认按 1M 实测上限，其他模型或网关应覆盖 |
+| `LABOR_CONTEXT_WARN_RATIO` | `0.9` | 发起请求前的上下文预警阈值；达到后本轮请求会被拦截 |
 | `LABOR_REQUEST_TIMEOUT_MS` | `180000` | 单次 API 请求超时，毫秒 |
 
 `.env` 从本项目根目录读取，与 MCP 客户端当前目录无关。相对路径也以本项目根目录解析；创建会话时提供的相对目录以默认工作目录解析。进程环境变量优先于 `.env`。修改 API、模型或端口需要重启服务；修改端口或数据目录后还需要重新加载 MCP 客户端。不会自动读取 Harness 的密钥。
@@ -105,7 +107,7 @@ agent_wait {"wait_ms":55000}
 session_get {"limit":30}
 ```
 
-`session_get` 默认返回最近 30 条消息；工具结果与工具参数仅提供短预览，并受总字符预算限制。需要核对某条结果时，把返回的消息 `id` 传入 `message_ids`，即可读取指定消息的完整文本；若返回 `textTruncated: true`，可增大 `max_chars`。`roles` 用于筛选 `user`、`assistant`、`tool`、`system`，`before_message_id` 用于向前分页。读取完整工具参数需显式设置 `include_tool_args: true`。
+`session_get` 默认返回最近 30 条消息；工具结果与工具参数仅提供短预览，并受总字符预算限制。需要核对某条结果时，把返回的消息 `id` 传入 `message_ids`，即可读取指定消息的完整文本；若返回 `textTruncated: true`，可增大 `max_chars`。`roles` 用于筛选 `user`、`assistant`、`tool`、`system`，`before_message_id` 用于向前分页。读取完整工具参数需显式设置 `include_tool_args: true`。session 元数据还会返回 `contextBudget`，包括估算 token、配置上限、预留输出和当前比例。
 
 为减少主 AI 的轮询开销，长任务派发时可给 `agent_send` 设置 `wait_ms: 55000`；若仍在运行，使用 `agent_wait(wait_ms: 55000)`。等待工具会监听会话状态变化，结束、报错或取消时立即返回，超时仍运行时才返回。不要用 `agent_send` 发送“继续/等待”来轮询，因为运行中的发送会成为任务引导。
 
@@ -144,10 +146,12 @@ npm run setup:skill
 ## 上下文和缓存
 
 - **DeepSeek 默认 `local`**：每轮将完整的 Responses input/output（包括 reasoning、工具调用和结果）持久保存，后续请求完整续传。重启后台后可以继续旧会话。
-- **服务端前缀缓存**由 DeepSeek 自动管理；界面显示接口 `usage.input_tokens_details.cached_tokens` 返回的命中量。保存历史不代表每轮免计费。
+- **服务端前缀缓存**由 DeepSeek 自动管理；界面按接口返回的用量显示每个 session 的缓存命中量和命中率（缓存命中输入 token ÷ 输入 token）。保存历史不代表每轮免计费。
+- 网页按 session 展示 DeepSeek Flash 的人民币费用估算，底层按每次请求的峰谷时段累计 USD 价格，再按每日更新的 [USD/CNY 中间汇率](https://frankfurter.dev/)折算；汇率更新后已累计 session 的人民币显示也会变化。缓存命中属于输入 token 的子集。中国法定节假日从 [Hi8 节假日 API](https://hi8.com/t/jiejiari-api) 自动同步到本地缓存，服务启动时立即检查并每日更新；同步失败保留上次数据，网页仍可手动标记。升级前缺少分时记录的历史用量及其他模型不计入估算。价格使用[DeepSeek 官方费率](https://api-docs.deepseek.com/quick_start/pricing/)，估算不等同于服务商账单。
 - **`previous_response_id`**：仅供支持服务端上下文的网关；仅发送新增项，并继续发送系统指令。服务端明确报告 ID 失效时，回退到本地完整历史；更换模型、地址或密钥时重置 ID。
 - DeepSeek 官方当前**不支持** `previous_response_id`、`conversation` 和 `store`，因此连接官方接口时应保留 `local`。[DeepSeek Responses 兼容说明](https://api-docs.deepseek.com/guides/responses_api/)。ID 续接语义参见 [OpenAI 会话状态说明](https://developers.openai.com/api/docs/guides/conversation-state)。
-- 暂不做自动压缩或总结，超出模型上下文窗口时会显示接口错误，需要新建会话。请求失败和停止执行都会保留已完成的记录与文件修改。
+- 暂不做自动压缩或总结。服务会在每次模型请求前估算历史、指令、工具定义和预留输出的上下文用量；达到 `LABOR_CONTEXT_WARN_RATIO` 时拦截请求并提示创建新会话，避免先发请求再收到上下文超限错误。估算器不使用供应商专用 tokenizer，实际 `input_tokens` 会在响应后记录并作为参考；仍应按模型或网关实际上下文上限配置 `LABOR_CONTEXT_LIMIT_TOKENS`。
+- 网页对用户和 Agent 回复渲染常用 Markdown（标题、列表、链接、引用、表格、代码块和行内格式）；工具输出继续按纯文本展示，避免命令结果被当成页面内容。
 
 ## 工具行为与运行范围
 

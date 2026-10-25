@@ -55,6 +55,9 @@ export async function request(c: Config, route: string, body?: unknown, timeout 
     body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(timeout),
   });
   const data = await response.json() as any;
-  if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+  if (!response.ok) {
+    const error = new Error(data.error || `HTTP ${response.status}`) as Error & { status?: number; data?: unknown };
+    error.status = response.status; error.data = data; throw error;
+  }
   return data;
 }

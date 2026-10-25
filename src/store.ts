@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import type { EstimatedCost } from './pricing.js';
 
 export type ApiItem = Record<string, any>;
 export type Message = {
@@ -10,12 +11,18 @@ export type Message = {
   state?: 'running' | 'done' | 'error' | 'skipped';
   kind?: 'guidance'; delivery?: 'queued' | 'applied';
 };
+export type ContextBudget = {
+  limitTokens: number; warnRatio: number; estimatedInputTokens: number;
+  reservedOutputTokens: number; estimatedRequestTokens: number; ratio: number;
+  status: 'ok' | 'warning' | 'exceeded'; source: 'estimate' | 'provider'; updatedAt: string;
+};
 export type Session = {
   id: string; title: string; workspace: string; createdAt: string; updatedAt: string;
   status: 'idle' | 'running' | 'error' | 'cancelled';
   messages: Message[]; history: ApiItem[]; previousResponseId?: string;
   responseCursor?: number; providerKey?: string; error?: string;
-  usage: { input: number; output: number; cached: number };
+  contextBudget?: ContextBudget;
+  usage: { input: number; output: number; cached: number; estimatedCosts?: Record<string, EstimatedCost> };
 };
 
 export class AppError extends Error {
@@ -34,6 +41,7 @@ export function atomicWrite(file: string, text: string) {
 export class Store extends EventEmitter {
   sessions = new Map<string, Session>();
   activeSessionId: string | null = null;
+  holidayOverrideDate: string | null = null;
   constructor(public dir: string) {
     super();
     fs.mkdirSync(path.join(dir, 'sessions'), { recursive: true });
@@ -55,7 +63,12 @@ export class Store extends EventEmitter {
       this.sessions.set(s.id, s);
     }
     const state = path.join(dir, 'state.json');
-    if (fs.existsSync(state)) this.activeSessionId = JSON.parse(fs.readFileSync(state, 'utf8')).activeSessionId;
+    if (fs.existsSync(state)) {
+      const saved = JSON.parse(fs.readFileSync(state, 'utf8'));
+      this.activeSessionId = saved.activeSessionId;
+      if (typeof saved.holidayOverrideDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(saved.holidayOverrideDate))
+        this.holidayOverrideDate = saved.holidayOverrideDate;
+    }
     if (!this.sessions.has(this.activeSessionId || '')) this.activeSessionId = null;
   }
   get(id?: string | null) {
@@ -73,8 +86,19 @@ export class Store extends EventEmitter {
   }
   select(id: string) {
     const s = this.get(id); this.activeSessionId = id;
-    atomicWrite(path.join(this.dir, 'state.json'), JSON.stringify({ activeSessionId: id }));
+    this.saveState();
     this.emit('change', { sessionId: id }); return s;
+  }
+  setHolidayOverride(date: string, enabled: boolean) {
+    if (enabled) this.holidayOverrideDate = date;
+    else if (this.holidayOverrideDate === date) this.holidayOverrideDate = null;
+    this.saveState();
+  }
+  isHolidayOverride(date: string) { return this.holidayOverrideDate === date; }
+  private saveState() {
+    atomicWrite(path.join(this.dir, 'state.json'), JSON.stringify({
+      activeSessionId: this.activeSessionId, holidayOverrideDate: this.holidayOverrideDate,
+    }));
   }
   save(s: Session) {
     s.updatedAt = now();
@@ -86,8 +110,8 @@ export class Store extends EventEmitter {
   }
   list() {
     return [...this.sessions.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      .map(({ id, title, workspace, createdAt, updatedAt, status, usage }) =>
-        ({ id, title, workspace, createdAt, updatedAt, status, usage }));
+      .map(({ id, title, workspace, createdAt, updatedAt, status, usage, contextBudget }) =>
+        ({ id, title, workspace, createdAt, updatedAt, status, usage, contextBudget }));
   }
   view(s: Session) {
     const { history, providerKey, responseCursor, ...visible } = s;

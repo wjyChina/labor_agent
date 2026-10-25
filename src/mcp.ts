@@ -7,7 +7,7 @@ import type { Message } from './store.js';
 
 const config = loadConfig();
 const server = new McpServer({ name: 'labor-agent', version: '0.1.0' }, {
-  instructions: 'Labor Agent is an autonomous local DeepSeek coding partner. Use MCP tools for all ordinary task interaction; do not open or operate the local browser UI to send tasks, select sessions, poll status, or read transcripts. The backend opens the UI when the service starts. Create sessions with session_create, then pass an explicit session_id to MCP calls. Talk to it using agent_send: explain the goal, scope, constraints and acceptance criteria in ordinary language. It chooses its own tools. For long tasks, set agent_send wait_ms to 55000. If it returns running, call agent_wait with wait_ms up to 55000; if that times out while still running, keep waiting. Do not do unrelated preparation or repeatedly read the transcript while waiting. While running, agent_send queues new guidance instead of starting another run; only send it to correct direction or resolve a blocker, never as a wait command. Guidance is applied before the next model call; the active tool finishes and unstarted older calls are skipped so it can replan. Do not resubmit the original task when polling. Use agent_cancel to stop the active request/tool immediately. Prefer status and the final deliverable report; inspect recent process records only when needed, starting with the latest task turn. session_get returns compact tool-result previews by default; when a specific result is needed, call it again with that message ID in message_ids to fetch full text, and increase max_chars if it is truncated. Use before_message_id to page backwards and roles to filter. Then verify the outcome. idle means the turn ended, not acceptance passed. Only use browser tools when the user explicitly asks you to inspect or operate the UI.',
+  instructions: 'Labor Agent is an autonomous local DeepSeek coding partner. Use MCP tools for all ordinary task interaction; do not open or operate the local browser UI to send tasks, select sessions, poll status, or read transcripts. The backend opens the UI when the service starts. Create sessions with session_create, then pass an explicit session_id to MCP calls. Talk to it using agent_send: explain the goal, scope, constraints and acceptance criteria in ordinary language. It chooses its own tools. For long tasks, set agent_send wait_ms to 55000. If it returns running, call agent_wait with wait_ms up to 55000; if that times out while still running, keep waiting. Do not do unrelated preparation or repeatedly read the transcript while waiting. While running, agent_send queues new guidance instead of starting another run; only send it to correct direction or resolve a blocker, never as a wait command. Guidance is applied before the next model call; the active tool finishes and unstarted older calls are skipped so it can replan. Do not resubmit the original task when polling. If agent_send reports a context budget warning, create a new session with the same workspace and carry over the goal and unfinished work; do not keep retrying the blocked session. Use agent_cancel to stop the active request/tool immediately. Prefer status and the final deliverable report; inspect recent process records only when needed, starting with the latest task turn. session_get returns compact tool-result previews by default; when a specific result is needed, call it again with that message ID in message_ids to fetch full text, and increase max_chars if it is truncated. Use before_message_id to page backwards and roles to filter. Then verify the outcome. idle means the turn ended, not acceptance passed. Only use browser tools when the user explicitly asks you to inspect or operate the UI.',
 });
 const sessionId = z.string().uuid().optional().describe('Session ID. Omit to use the currently selected session.');
 const annotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
@@ -78,7 +78,7 @@ function sessionMetadata(s: any) {
   return {
     id: s.id, title: s.title, workspace: s.workspace, createdAt: s.createdAt,
     updatedAt: s.updatedAt, status: s.status, error: s.error, usage: s.usage,
-    historyItems: s.historyItems, pendingGuidance: s.pendingGuidance,
+    contextBudget: s.contextBudget, historyItems: s.historyItems, pendingGuidance: s.pendingGuidance,
   };
 }
 async function sessionStatus(id: string, waitMs = 0) {
@@ -96,7 +96,8 @@ async function call(action: () => Promise<unknown>) {
     await ensureService(config); const data = await action();
     return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
   } catch (error) {
-    return { isError: true, content: [{ type: 'text' as const, text: error instanceof Error ? error.message : String(error) }] };
+    const data = (error as { data?: unknown })?.data;
+    return { isError: true, content: [{ type: 'text' as const, text: data ? JSON.stringify(data, null, 2) : error instanceof Error ? error.message : String(error) }] };
   }
 }
 async function resolveId(id?: string) {
@@ -179,7 +180,7 @@ server.registerTool('session_get', {
   };
 }));
 server.registerTool('agent_send', {
-  description: 'Talk to the coding agent in ordinary text. When idle, starts a conversational turn (wait_ms default 1s, max 55s). While running, immediately queues the text as guidance for the current task, never starting a parallel run. Guidance takes effect at the next model call after the active tool finishes; unstarted older calls are skipped. pendingGuidance and message.delivery show queued/applied state. The agent chooses tools and may modify files/execute commands. Recent tool results in this response are previews; use session_get with a returned message ID in message_ids to fetch a full result. Use agent_wait to wait for completion, agent_status for an immediate snapshot, and do not repeat the original task. agent_cancel stops immediately.',
+  description: 'Talk to the coding agent in ordinary text. When idle, starts a conversational turn (wait_ms default 1s, max 55s). While running, immediately queues the text as guidance for the current task, never starting a parallel run. Guidance takes effect at the next model call after the active tool finishes; unstarted older calls are skipped. pendingGuidance and message.delivery show queued/applied state. The agent chooses tools and may modify files. If the context budget reaches its configured warning threshold, the request is rejected before the model call and the response explains that a new session is required. Recent tool results in this response are previews; use session_get with a returned message ID in message_ids to fetch a full result. Use agent_wait to wait for completion, agent_status for an immediate snapshot, and do not repeat the original task. agent_cancel stops immediately.',
   inputSchema: { text: z.string().min(1).max(100000), session_id: sessionId,
     wait_ms: z.number().int().min(0).max(55000).default(1000) },
   annotations: { ...annotations, destructiveHint: true },

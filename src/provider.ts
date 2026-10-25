@@ -3,8 +3,18 @@ import type { ApiItem } from './store.js';
 import { toolDefinitions } from './tools.js';
 
 export type ModelResponse = { id?: string; status?: string; output: ApiItem[]; usage?: any; error?: any; incomplete_details?: any };
+// No tokenizer is bundled because gateways may use different model tokenizers.
+// This deliberately conservative estimate is used only before a request; the
+// provider's input_tokens value is recorded after each successful response.
+export function estimateRequestTokens(input: ApiItem[], instructions: string, reservedOutputTokens: number) {
+  const payload = JSON.stringify({ instructions, input, tools: toolDefinitions });
+  let ascii = 0, nonAscii = 0;
+  for (const char of payload) (char.codePointAt(0)! <= 0x7f ? ascii++ : nonAscii++);
+  const estimatedInputTokens = Math.ceil(ascii / 3 + nonAscii / 1.5);
+  return { estimatedInputTokens, estimatedRequestTokens: estimatedInputTokens + Math.max(0, reservedOutputTokens) };
+}
 export class ProviderError extends Error {
-  constructor(message: string, public status = 502) { super(message); }
+  constructor(message: string, public status = 502, public usage?: any) { super(message); }
 }
 export class ResponsesProvider {
   constructor(private config: Config) {}
@@ -59,7 +69,7 @@ export class ResponsesProvider {
     }
     if (!final || !Array.isArray(final.output)) throw new ProviderError('模型流提前断开，没有收到完整 response。请重试。');
     if (final.status && final.status !== 'completed')
-      throw new ProviderError(`模型未完成：${final.error?.message || final.incomplete_details?.reason || final.status}`);
+      throw new ProviderError(`模型未完成：${final.error?.message || final.incomplete_details?.reason || final.status}`, 502, final.usage);
     return final;
   }
 }
