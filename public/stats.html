@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light"><title>Token 统计 · Labor Agent</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/stats.css">
+  <script src="/stats.js" defer></script>
+</head>
+<body class="stats-page">
+  <main class="stats-main">
+    <header class="stats-header">
+      <a class="brand stats-brand" href="/" aria-label="返回 Labor Agent 工作台"><span class="logo">L</span><span>Labor Agent</span></a>
+      <a class="stats-home-link" href="/">← 返回工作台</a>
+    </header>
+    <section class="stats-intro">
+      <div class="stats-eyebrow">USAGE ANALYTICS</div>
+      <h1>Token 使用统计</h1>
+      <p>按北京时间查看每日用量和模型输出速度。选择一个或多个执行配置进行对比。</p>
+    </section>
+    <section class="stats-controls" aria-label="统计筛选">
+      <div class="range-control"><label for="range">时间范围</label><select id="range" class="field-input"><option value="7">最近 7 天</option><option value="30" selected>最近 30 天</option><option value="90">最近 90 天</option><option value="365">最近 365 天</option><option value="all">全部</option></select></div>
+      <div class="config-control">
+        <div class="config-heading"><strong>执行配置</strong><div><button id="select-all" type="button">全选</button><button id="select-none" type="button">清空</button></div></div>
+        <div class="config-options" id="configs"><span class="stats-muted">正在读取配置…</span></div>
+      </div>
+    </section>
+    <div class="stats-error hidden" id="error" role="alert"></div>
+    <div class="stats-period" id="period"></div>
+    <section class="stats-cards" id="cards" aria-label="统计摘要"></section>
+    <section class="stats-chart-grid">
+      <article class="stats-panel">
+        <div class="panel-heading"><div><h2>每日 Token 用量</h2><p>按所选配置对比总量；悬浮柱形可看输入、缓存和输出明细</p></div></div>
+        <div class="chart-legend" id="token-legend"></div>
+        <div class="chart-wrap" id="token-chart"></div>
+      </article>
+      <article class="stats-panel">
+        <div class="panel-heading"><div><h2>输出速度</h2><p>按模型输出 Token 与调用耗时加权计算</p></div></div>
+        <div class="speed-note">DeepSeek 按 API 请求耗时统计；Codex 按 turn 总耗时统计，可能包含工具执行时间。</div>
+        <div class="chart-wrap" id="speed-chart"></div>
+        <div class="speed-legend" id="speed-legend"></div>
+      </article>
+    </section>
+    <footer class="stats-footer">统计来自 Labor Agent 本地逐次模型调用记录；早期只保存累计用量、没有逐日数据的 session 无法回填。所有日期均为北京时间。</footer>
+  </main>
+</body>
+</html>

@@ -170,6 +170,88 @@ app.get('/api/state', async (_req, res) => {
   res.json({ ...status(), sessions: store.list(),
     session: active ? store.view(active) : null, sessionProvider: active ? sessionProvider(active) : null });
 });
+app.get('/api/stats/tokens', (req, res) => {
+  const range = z.enum(['7', '30', '90', '365', 'all']).default('30').parse(req.query.range);
+  const metricsDir = path.join(config.dataDir, 'metrics');
+  const providers = new Map(providerProfiles.snapshot().profiles.map(profile => [profile.id, profile]));
+  const codexProfiles = new Map(codexAccounts.snapshot().profiles.map(profile => [profile.id, profile]));
+  type ConfigMetric = { id: string; backend: 'deepseek' | 'codex'; providerId?: string; model: string;
+    apiFormat?: string; serviceTier?: string; label: string; lastSeen: string };
+  type DailyMetric = { inputTokens: number; cachedTokens: number; outputTokens: number; calls: number;
+    speedOutputTokens: number; speedDurationMs: number };
+  const configs = new Map<string, ConfigMetric>();
+  const daily = new Map<string, Map<string, DailyMetric>>();
+  if (fs.existsSync(metricsDir)) {
+    for (const file of fs.readdirSync(metricsDir).filter(name => name.endsWith('.jsonl') && name !== 'agent-runs.jsonl')) {
+      let rows: string[];
+      try { rows = fs.readFileSync(path.join(metricsDir, file), 'utf8').split(/\r?\n/).filter(Boolean); }
+      catch { continue; }
+      for (const row of rows) {
+        try {
+          const metric = JSON.parse(row);
+          if (metric.schemaVersion !== 1 || !['api_request', 'codex_turn'].includes(metric.scope) ||
+              !['deepseek', 'codex'].includes(metric.backend) || typeof metric.model !== 'string' ||
+              typeof metric.completedAt !== 'string' || !Number.isFinite(Date.parse(metric.completedAt))) continue;
+          const backend = metric.backend as 'deepseek' | 'codex';
+          const providerId = typeof metric.providerId === 'string' ? metric.providerId : undefined;
+          const apiFormat = typeof metric.apiFormat === 'string' ? metric.apiFormat : undefined;
+          const serviceTier = typeof metric.requestedServiceTier === 'string' ? metric.requestedServiceTier : undefined;
+          const configId = [backend, providerId || (backend === 'codex' ? 'unknown' : 'legacy-env'), metric.model,
+            apiFormat || '', serviceTier || ''].map(value => encodeURIComponent(value)).join('|');
+          const providerLabel = backend === 'codex'
+            ? (codexProfiles.get(providerId || '')?.label || (providerId ? `Codex ${providerId.slice(0, 8)}` : 'Codex'))
+            : (providerId ? providers.get(providerId)?.label || `已删除配置 ${providerId.slice(0, 8)}` : 'DeepSeek（旧配置）');
+          const apiLabel = apiFormat === 'chat_completions' ? 'Chat Completions' : apiFormat === 'responses' ? 'Responses' : '';
+          const tierLabel = serviceTier && serviceTier !== 'default' ? serviceTier.toUpperCase() : '';
+          const label = [providerLabel, metric.model, tierLabel, apiLabel].filter(Boolean).join(' · ');
+          const completedAt = new Date(metric.completedAt);
+          const date = beijingDate(completedAt);
+          const entry: ConfigMetric = { id: configId, backend, ...(providerId ? { providerId } : {}), model: metric.model,
+            ...(apiFormat ? { apiFormat } : {}), ...(serviceTier ? { serviceTier } : {}), label, lastSeen: metric.completedAt };
+          const previous = configs.get(configId);
+          if (!previous || previous.lastSeen < entry.lastSeen) configs.set(configId, entry);
+          const value = (v: unknown) => typeof v === 'number' && Number.isFinite(v) ? Math.max(0, v) : 0;
+          const inputTokens = value(metric.inputTokens);
+          const cachedTokens = Math.min(inputTokens, value(metric.cachedTokens));
+          const outputTokens = value(metric.outputTokens);
+          const durationMs = value(metric.durationMs);
+          let byConfig = daily.get(date);
+          if (!byConfig) { byConfig = new Map(); daily.set(date, byConfig); }
+          let aggregate = byConfig.get(configId);
+          if (!aggregate) {
+            aggregate = { inputTokens: 0, cachedTokens: 0, outputTokens: 0, calls: 0,
+              speedOutputTokens: 0, speedDurationMs: 0 };
+            byConfig.set(configId, aggregate);
+          }
+          aggregate.inputTokens += inputTokens;
+          aggregate.cachedTokens += cachedTokens;
+          aggregate.outputTokens += outputTokens;
+          aggregate.calls += 1;
+          if (metric.status === 'success' && outputTokens > 0 && durationMs > 0) {
+            aggregate.speedOutputTokens += outputTokens;
+            aggregate.speedDurationMs += durationMs;
+          }
+        } catch { /* Ignore malformed or incompatible historical rows. */ }
+      }
+    }
+  }
+  const today = beijingDate(new Date());
+  const firstRecordedDate = [...daily.keys()].sort()[0] || today;
+  const startDate = range === 'all' ? firstRecordedDate : (() => {
+    const date = new Date(`${today}T00:00:00+08:00`);
+    date.setUTCDate(date.getUTCDate() - (Number(range) - 1));
+    return beijingDate(date);
+  })();
+  const dates: string[] = [];
+  const cursor = new Date(`${startDate}T00:00:00+08:00`);
+  const end = new Date(`${today}T00:00:00+08:00`);
+  while (cursor <= end) {
+    dates.push(beijingDate(cursor)); cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  const selectedConfigs = [...configs.values()].sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
+  res.json({ timezone: 'Asia/Shanghai', range, startDate, endDate: today, configs: selectedConfigs,
+    days: dates.map(date => ({ date, byConfig: Object.fromEntries(daily.get(date) || []) })) });
+});
 app.get('/api/settings', async (_req, res) => {
   const snapshot = codexAccounts.snapshot();
   await Promise.all(snapshot.profiles.map(profile => codexAccounts.refresh(profile.id).catch(() => undefined)));
