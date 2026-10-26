@@ -83,7 +83,7 @@ Read relevant AGENTS.md instructions first. File tools are limited to the worksp
       source: 'provider', updatedAt: new Date().toISOString(),
     };
   }
-  private recordUsage(s: Session, usage: any, at: Date) {
+  private recordUsage(s: Session, usage: any, at: Date): number | undefined {
     const input = Math.max(0, Number(usage?.input_tokens) || 0);
     const output = Math.max(0, Number(usage?.output_tokens) || 0);
     const cached = Math.min(input, Math.max(0, Number(usage?.input_tokens_details?.cached_tokens) || 0));
@@ -92,22 +92,24 @@ Read relevant AGENTS.md instructions first. File tools are limited to the worksp
     if (new URL(this.config.baseUrl).hostname === 'api.deepinfra.com' && Number.isFinite(usage?.estimated_cost) && usage.estimated_cost >= 0) {
       const estimate = s.usage.providerEstimate ||= { usd: 0, input: 0, output: 0, cached: 0, calls: 0 };
       estimate.usd += usage.estimated_cost; estimate.input += input; estimate.output += output; estimate.cached += cached; estimate.calls++;
-      return;
+      return usage.estimated_cost;
     }
     const date = beijingDate(at);
     const holiday = this.store.isHolidayOverride(date) || this.holidayCalendar?.isHoliday(date) || false;
-    const estimate = estimateDeepSeekFlash({ baseUrl: this.config.baseUrl, model: this.config.model, at,
+    const model = s.model || this.config.model;
+    const estimate = estimateDeepSeekFlash({ baseUrl: this.config.baseUrl, model, at,
       holiday, inputTokens: input, cachedTokens: cached, outputTokens: output });
-    if (!estimate) return;
-    const model = this.config.model.trim();
+    if (!estimate) return undefined;
+    const modelKey = model.trim();
     s.usage.estimatedCosts ||= {};
-    const cost = s.usage.estimatedCosts[model] ||= {
+    const cost = s.usage.estimatedCosts[modelKey] ||= {
       usd: 0, peakUsd: 0, offPeakUsd: 0, calls: 0, input: 0, cached: 0, output: 0, since: at.toISOString(),
     };
     cost.usd += estimate.usd;
     cost[estimate.period === 'peak' ? 'peakUsd' : 'offPeakUsd'] += estimate.usd;
     cost.calls++;
     cost.input += input; cost.cached += cached; cost.output += output;
+    return estimate.usd;
   }
   guide(s: Session, text: string, source: 'web' | 'mcp') {
     this.validateText(text);
@@ -190,7 +192,7 @@ Read relevant AGENTS.md instructions first. File tools are limited to the worksp
           this.saveContextWarning(s, budget);
           s.status = 'idle'; s.error = undefined; this.store.save(s); return;
         }
-        let response, requestedAt: Date;
+        let response;
         const request = async (input: any[], previousId?: string) => {
           const at = new Date();
           const started = performance.now();
@@ -224,34 +226,36 @@ Read relevant AGENTS.md instructions first. File tools are limited to the worksp
           try {
             const response = await this.provider.create(input, instructions, previousId, signal, onRequestDelta);
             const completedAt = new Date();
+            const estimatedCostUsd = response.usage ? this.recordUsage(s, response.usage, at) : undefined;
             this.store.recordModelRequest(s, { ...metricBase, completedAt: completedAt.toISOString(),
               durationMs: Math.max(0, Math.round(performance.now() - started)), status: 'success',
               responseStatus: response.status?.slice(0, 40),
               actualServiceTier: response.service_tier, ...usageFields(response.usage),
+              ...(estimatedCostUsd !== undefined ? { estimatedCostUsd } : {}),
               ...(timeToFirstTextMs !== undefined ? { timeToFirstTextMs } : {}) });
-            return { response, at };
+            return { response };
           } catch (e) {
-            if (e instanceof ProviderError && e.usage) this.recordUsage(s, e.usage, at);
+            const estimatedCostUsd = e instanceof ProviderError && e.usage ? this.recordUsage(s, e.usage, at) : undefined;
             const completedAt = new Date();
             this.store.recordModelRequest(s, { ...metricBase, completedAt: completedAt.toISOString(),
               durationMs: Math.max(0, Math.round(performance.now() - started)), status: 'error',
               ...(e instanceof ProviderError ? { errorStatus: e.status } : {}),
               ...(e instanceof ProviderError && e.usage ? usageFields(e.usage) : {}),
+              ...(estimatedCostUsd !== undefined ? { estimatedCostUsd } : {}),
               ...(timeToFirstTextMs !== undefined ? { timeToFirstTextMs } : {}) });
             throw e;
           }
         };
         try {
-          ({ response, at: requestedAt } = await request(requestInput, usePrevious || undefined));
+          ({ response } = await request(requestInput, usePrevious || undefined));
         } catch (e) {
           if (usePrevious && e instanceof ProviderError && [400, 404].includes(e.status) && /previous_response|response.+(not found|expired|invalid)/i.test(e.message)) {
             s.previousResponseId = undefined; s.responseCursor = undefined;
             const interruptedMessage = pending as Message | undefined;
             if (interruptedMessage) { interruptedMessage.state = 'error'; pending = undefined; }
-            ({ response, at: requestedAt } = await request(s.history));
+            ({ response } = await request(s.history));
           } else throw e;
         }
-        if (response.usage) this.recordUsage(s, response.usage, requestedAt);
         if (response.service_tier) s.usage.lastServiceTier = response.service_tier;
         signal.throwIfAborted();
         s.history.push(...response.output);

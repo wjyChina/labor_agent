@@ -178,7 +178,7 @@ app.get('/api/stats/tokens', (req, res) => {
   type ConfigMetric = { id: string; backend: 'deepseek' | 'codex'; providerId?: string; model: string;
     apiFormat?: string; serviceTier?: string; label: string; lastSeen: string };
   type DailyMetric = { inputTokens: number; cachedTokens: number; outputTokens: number; calls: number;
-    speedOutputTokens: number; speedDurationMs: number };
+    speedOutputTokens: number; speedDurationMs: number; estimatedCostUsd: number; costCalls: number };
   const configs = new Map<string, ConfigMetric>();
   const daily = new Map<string, Map<string, DailyMetric>>();
   if (fs.existsSync(metricsDir)) {
@@ -220,7 +220,7 @@ app.get('/api/stats/tokens', (req, res) => {
           let aggregate = byConfig.get(configId);
           if (!aggregate) {
             aggregate = { inputTokens: 0, cachedTokens: 0, outputTokens: 0, calls: 0,
-              speedOutputTokens: 0, speedDurationMs: 0 };
+              speedOutputTokens: 0, speedDurationMs: 0, estimatedCostUsd: 0, costCalls: 0 };
             byConfig.set(configId, aggregate);
           }
           aggregate.inputTokens += inputTokens;
@@ -230,6 +230,10 @@ app.get('/api/stats/tokens', (req, res) => {
           if (metric.status === 'success' && outputTokens > 0 && durationMs > 0) {
             aggregate.speedOutputTokens += outputTokens;
             aggregate.speedDurationMs += durationMs;
+          }
+          if (typeof metric.estimatedCostUsd === 'number' && Number.isFinite(metric.estimatedCostUsd) && metric.estimatedCostUsd >= 0) {
+            aggregate.estimatedCostUsd += metric.estimatedCostUsd;
+            aggregate.costCalls += 1;
           }
         } catch { /* Ignore malformed or incompatible historical rows. */ }
       }
@@ -250,6 +254,7 @@ app.get('/api/stats/tokens', (req, res) => {
   }
   const selectedConfigs = [...configs.values()].sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
   res.json({ timezone: 'Asia/Shanghai', range, startDate, endDate: today, configs: selectedConfigs,
+    usdCnyRate: exchangeRate.get(),
     days: dates.map(date => ({ date, byConfig: Object.fromEntries(daily.get(date) || []) })) });
 });
 app.get('/api/settings', async (_req, res) => {

@@ -18,7 +18,7 @@
       <p>按北京时间查看每日用量和模型输出速度。选择一个或多个执行配置进行对比。</p>
     </section>
     <section class="stats-controls" aria-label="统计筛选">
-      <div class="range-control"><label for="range">时间范围</label><select id="range" class="field-input"><option value="7">最近 7 天</option><option value="30" selected>最近 30 天</option><option value="90">最近 90 天</option><option value="365">最近 365 天</option><option value="all">全部</option></select></div>
+      <div class="range-control"><label for="range">时间范围</label><select id="range" class="field-input"><option value="7">最近 7 天</option><option value="30">最近 30 天</option><option value="90">最近 90 天</option><option value="365" selected>最近 365 天</option><option value="all">全部</option></select></div>
       <div class="config-control">
         <div class="config-heading"><strong>执行配置</strong><div><button id="select-all" type="button">全选</button><button id="select-none" type="button">清空</button></div></div>
         <div class="config-options" id="configs"><span class="stats-muted">正在读取配置…</span></div>
@@ -27,20 +27,26 @@
     <div class="stats-error hidden" id="error" role="alert"></div>
     <div class="stats-period" id="period"></div>
     <section class="stats-cards" id="cards" aria-label="统计摘要"></section>
+    <section class="stats-panel heatmap-panel">
+      <div class="panel-heading"><div><h2>每日 Token 消耗</h2><p>GitHub 风格日历图；颜色越深代表所选配置当日用量越高</p></div><span class="heatmap-total" id="heatmap-total"></span></div>
+      <div class="heatmap-scroll" id="token-heatmap"></div>
+      <div class="heatmap-legend"><span>少</span><i class="heat-level-0"></i><i class="heat-level-1"></i><i class="heat-level-2"></i><i class="heat-level-3"></i><i class="heat-level-4"></i><span>多</span></div>
+    </section>
     <section class="stats-chart-grid">
-      <article class="stats-panel">
-        <div class="panel-heading"><div><h2>每日 Token 用量</h2><p>按所选配置对比总量；悬浮柱形可看输入、缓存和输出明细</p></div></div>
-        <div class="chart-legend" id="token-legend"></div>
-        <div class="chart-wrap" id="token-chart"></div>
-      </article>
       <article class="stats-panel">
         <div class="panel-heading"><div><h2>输出速度</h2><p>按模型输出 Token 与调用耗时加权计算</p></div></div>
         <div class="speed-note">DeepSeek 按 API 请求耗时统计；Codex 按 turn 总耗时统计，可能包含工具执行时间。</div>
         <div class="chart-wrap" id="speed-chart"></div>
         <div class="speed-legend" id="speed-legend"></div>
       </article>
+      <article class="stats-panel">
+        <div class="panel-heading"><div><h2>每日费用估算</h2><p id="amount-subtitle">按有费用记录的 API 调用统计；Codex 订阅不计入</p></div></div>
+        <div class="speed-note" id="amount-note"></div>
+        <div class="chart-wrap" id="amount-chart"></div>
+        <div class="speed-legend" id="amount-legend"></div>
+      </article>
     </section>
-    <footer class="stats-footer">统计来自 Labor Agent 本地逐次模型调用记录；早期只保存累计用量、没有逐日数据的 session 无法回填。所有日期均为北京时间。</footer>
+    <footer class="stats-footer">统计来自 Labor Agent 本地逐次模型调用记录；早期只保存累计用量、没有逐日数据的 session 无法回填。金额按接口费用估算，并以当前 USD/CNY 汇率换算；所有日期均为北京时间。</footer>
   </main>
 </body>
 </html>
