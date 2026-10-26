@@ -20,6 +20,14 @@ export type ContextBudget = {
 export type CodexSandbox = 'danger-full-access' | 'workspace-write' | 'read-only';
 export type ExecutionDefaults = { backend: 'deepseek' | 'codex'; profileId?: string; model?: string; codexSandbox?: CodexSandbox };
 export type CodexBinding = { profileId: string; model: string; sandbox?: CodexSandbox; threadId?: string; syncedItemIds?: string[] };
+export type ModelRequestMetric = {
+  schemaVersion: 1; backend: 'deepseek' | 'codex'; scope: 'api_request' | 'codex_turn';
+  startedAt: string; completedAt: string; durationMs: number;
+  model: string; providerId?: string; apiFormat?: 'responses' | 'chat_completions';
+  requestedServiceTier?: string; actualServiceTier?: string; status: 'success' | 'error';
+  responseStatus?: string; errorStatus?: number; inputTokens?: number; outputTokens?: number;
+  cachedTokens?: number; reasoningTokens?: number; estimatedCostUsd?: number; timeToFirstTextMs?: number;
+};
 export type Session = {
   id: string; title: string; workspace: string; createdAt: string; updatedAt: string;
   status: 'idle' | 'running' | 'error' | 'cancelled';
@@ -124,6 +132,16 @@ export class Store extends EventEmitter {
     s.updatedAt = now();
     atomicWrite(path.join(this.dir, 'sessions', `${s.id}.json`), JSON.stringify(s, null, 2));
     this.emit('change', { sessionId: s.id });
+  }
+  recordModelRequest(s: Session, metric: ModelRequestMetric) {
+    try {
+      const dir = path.join(this.dir, 'metrics');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.appendFileSync(path.join(dir, `${s.id}.jsonl`), `${JSON.stringify(metric)}\n`, { encoding: 'utf8', mode: 0o600 });
+    } catch {
+      // Telemetry must not turn a successful or billable model call into an agent failure.
+      console.error('无法保存模型耗时记录。');
+    }
   }
   add(s: Session, message: Omit<Message, 'id' | 'time'>) {
     const m = { ...message, id: randomUUID(), time: now() }; s.messages.push(m); this.save(s); return m;

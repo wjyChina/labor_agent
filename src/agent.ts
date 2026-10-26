@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import type { Config } from './config.js';
 import { AppError, Store, type ContextBudget, type Session, type Message } from './store.js';
 import { estimateRequestTokens, ResponsesProvider, ProviderError } from './provider.js';
@@ -185,11 +186,51 @@ Read relevant AGENTS.md instructions first. File tools are limited to the worksp
         let response, requestedAt: Date;
         const request = async (input: any[], previousId?: string) => {
           const at = new Date();
+          const started = performance.now();
+          let timeToFirstTextMs: number | undefined;
+          const onRequestDelta = (delta: string) => {
+            if (delta && timeToFirstTextMs === undefined) timeToFirstTextMs = Math.max(0, Math.round(performance.now() - started));
+            onDelta(delta);
+          };
+          const usageFields = (usage: any) => {
+            const count = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : undefined;
+            const inputTokens = count(usage?.input_tokens), outputTokens = count(usage?.output_tokens);
+            const cachedTokens = count(usage?.input_tokens_details?.cached_tokens);
+            const reasoningTokens = count(usage?.output_tokens_details?.reasoning_tokens);
+            const estimatedCostUsd = typeof usage?.estimated_cost === 'number' && Number.isFinite(usage.estimated_cost) && usage.estimated_cost >= 0
+              ? usage.estimated_cost : undefined;
+            return {
+              ...(inputTokens !== undefined ? { inputTokens } : {}),
+              ...(outputTokens !== undefined ? { outputTokens } : {}),
+              ...(cachedTokens !== undefined ? { cachedTokens: inputTokens === undefined ? cachedTokens : Math.min(inputTokens, cachedTokens) } : {}),
+              ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+              ...(estimatedCostUsd !== undefined ? { estimatedCostUsd } : {}),
+            };
+          };
+          const metricBase = {
+            schemaVersion: 1 as const, backend: 'deepseek' as const, scope: 'api_request' as const,
+            startedAt: at.toISOString(), model: s.model || c.model,
+            ...(s.providerId ? { providerId: s.providerId } : {}),
+            apiFormat: c.apiFormat, requestedServiceTier: c.serviceTier,
+            ...(timeToFirstTextMs !== undefined ? { timeToFirstTextMs } : {}),
+          };
           try {
-            const response = await this.provider.create(input, instructions, previousId, signal, onDelta);
+            const response = await this.provider.create(input, instructions, previousId, signal, onRequestDelta);
+            const completedAt = new Date();
+            this.store.recordModelRequest(s, { ...metricBase, completedAt: completedAt.toISOString(),
+              durationMs: Math.max(0, Math.round(performance.now() - started)), status: 'success',
+              responseStatus: response.status?.slice(0, 40),
+              actualServiceTier: response.service_tier, ...usageFields(response.usage),
+              ...(timeToFirstTextMs !== undefined ? { timeToFirstTextMs } : {}) });
             return { response, at };
           } catch (e) {
             if (e instanceof ProviderError && e.usage) this.recordUsage(s, e.usage, at);
+            const completedAt = new Date();
+            this.store.recordModelRequest(s, { ...metricBase, completedAt: completedAt.toISOString(),
+              durationMs: Math.max(0, Math.round(performance.now() - started)), status: 'error',
+              ...(e instanceof ProviderError ? { errorStatus: e.status } : {}),
+              ...(e instanceof ProviderError && e.usage ? usageFields(e.usage) : {}),
+              ...(timeToFirstTextMs !== undefined ? { timeToFirstTextMs } : {}) });
             throw e;
           }
         };

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import { CodexAccounts } from './codex-accounts.js';
 import type { CodexRpc } from './codex-rpc.js';
 import { AppError, now, Store, type CodexSandbox, type Message, type Session } from './store.js';
@@ -99,6 +100,19 @@ export class CodexAgent {
         estimatedRequestTokens: input, ratio, status: ratio >= 1 ? 'exceeded' : ratio >= 0.9 ? 'warning' : 'ok', source: 'provider', updatedAt: now() };
     }
   }
+  private recordTurnMetric(s: Session, model: string, startedAt: Date, started: number,
+    before: { input: number; output: number; cached: number }, turn?: any) {
+    const completedAt = new Date();
+    const delta = (current: number, previous: number) => Math.max(0, current - previous);
+    this.store.recordModelRequest(s, {
+      schemaVersion: 1, backend: 'codex', scope: 'codex_turn', startedAt: startedAt.toISOString(),
+      completedAt: completedAt.toISOString(), durationMs: Math.max(0, Math.round(performance.now() - started)),
+      model, providerId: s.codex?.profileId, status: turn?.status === 'completed' ? 'success' : 'error',
+      responseStatus: typeof turn?.status === 'string' ? turn.status.slice(0, 40) : undefined,
+      inputTokens: delta(s.usage.input, before.input), outputTokens: delta(s.usage.output, before.output),
+      cachedTokens: delta(s.usage.cached, before.cached),
+    });
+  }
   private async run(s: Session, user: Message, run: Run) {
     let notify: ((method: string, params: any) => void) | undefined;
     let disconnected: ((e: Error) => void) | undefined;
@@ -146,14 +160,24 @@ export class CodexAgent {
         const input = [...queued, ...(initial ? [user] : [])];
         run.pendingUserId = input[0].id;
         const terminal = new Promise<any>(resolve => { run.finish = resolve; });
-        const started = await client.request('turn/start', { threadId: s.codex!.threadId, model: model.model,
-          cwd: s.workspace, approvalPolicy: 'never', sandboxPolicy: this.sandboxPolicy(s),
-          ...(model.defaultReasoningEffort ? { effort: model.defaultReasoningEffort } : {}),
-          clientUserMessageId: input[0].id, input: input.map(m => ({ type: 'text', text: m.text, text_elements: [] })) });
-        initial = false; queued.forEach(m => { m.delivery = 'applied'; }); run.turnId = started.turn.id; this.store.save(s);
-        if (run.cancelled || run.question) void client.request('turn/interrupt', { threadId: s.codex!.threadId, turnId: run.turnId }).catch(() => {});
-        else if (this.queued(s).length) void this.steer(s, run);
-        const turn = await terminal; run.turnId = undefined;
+        const turnStartedAt = new Date(), turnStarted = performance.now();
+        const usageBefore = { input: s.usage.input, output: s.usage.output, cached: s.usage.cached };
+        let turn: any;
+        try {
+          const started = await client.request('turn/start', { threadId: s.codex!.threadId, model: model.model,
+            cwd: s.workspace, approvalPolicy: 'never', sandboxPolicy: this.sandboxPolicy(s),
+            ...(model.defaultReasoningEffort ? { effort: model.defaultReasoningEffort } : {}),
+            clientUserMessageId: input[0].id, input: input.map(m => ({ type: 'text', text: m.text, text_elements: [] })) });
+          initial = false; queued.forEach(m => { m.delivery = 'applied'; }); run.turnId = started.turn.id; this.store.save(s);
+          if (run.cancelled || run.question) void client.request('turn/interrupt', { threadId: s.codex!.threadId, turnId: run.turnId }).catch(() => {});
+          else if (this.queued(s).length) void this.steer(s, run);
+          turn = await terminal;
+        } catch (error) {
+          this.recordTurnMetric(s, model.model, turnStartedAt, turnStarted, usageBefore);
+          throw error;
+        }
+        this.recordTurnMetric(s, model.model, turnStartedAt, turnStarted, usageBefore, turn);
+        run.turnId = undefined;
         if (run.steering) await run.steering;
         if (run.cancelled || turn.status === 'interrupted') throw new Error(run.question || '本轮已停止。已完成的修改会保留。');
         if (run.question) throw new Error(run.question);
