@@ -59,6 +59,8 @@ macOS/Linux 可用 `test -f .env || cp .env.example .env` 代替上面的复制�
 
 ## MCP 与 skill 安装
 
+DeepInfra 可在左下角 API 配置中选择：`https://api.deepinfra.com/v1/openai`，模型 `deepseek-ai/DeepSeek-V4.1-Flash-1017`，协议 Chat Completions，档位 Flex。API Token 仅保存到本机数据目录。新 session 继承启用的渠道；Chat Completions 使用本地历史，支持工具循环、流式回复与缓存 token 统计，费用使用渠道返回的 `estimated_cost`。Flex 单次超时下限为 15 分钟。Flash 1017 的输出配置上限为 32,768 tokens（同时受 `LABOR_MAX_OUTPUT_TOKENS` 限制，其他 DeepInfra 模型为 16,384）；推理与工具参数也占此预算，大文件应分段生成。截断时显示诊断且不执行该响应的工具调用，不自动重试或改用 Standard；可以发送新消息继续。
+
 Codex 中执行：
 
 ```powershell

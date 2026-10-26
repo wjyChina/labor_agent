@@ -37,6 +37,9 @@
     <section class="conversation" id="conversation" aria-label="会话内容" aria-live="polite">
       <div id="messages"></div>
     </section>
+    <button class="scroll-bottom-button hidden" id="scroll-bottom" type="button" aria-label="滚动到最新消息" title="滚动到最新消息">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14m-7-7 7 7 7-7"/></svg>
+    </button>
     <div class="composer-area">
       <div class="run-caption hidden" id="run-caption"></div>
       <form class="composer" id="composer">
@@ -51,13 +54,16 @@
     <div class="dialog-eyebrow">EXECUTION</div><h2>执行账号与模型</h2>
     <p class="dialog-intro">这里设置整个 Labor Agent 的默认执行配置。保存后，之后新建的 session 和 MCP 创建的 session 会自动使用当前选择；已有 session 继续使用它创建时的绑定。</p>
     <label class="field-label" for="settings-backend">当前执行引擎</label>
-    <select class="field-input" id="settings-backend"><option value="deepseek">DeepSeek API</option><option value="codex">Codex 订阅</option></select>
+    <select class="field-input" id="settings-backend"><option value="deepseek">API 渠道（DeepSeek / DeepInfra）</option><option value="codex">Codex 订阅</option></select>
     <section id="deepseek-settings" class="provider-settings">
-      <label class="field-label" for="provider-profile">DeepSeek 配置</label>
+      <label class="field-label" for="provider-profile">API 配置</label>
       <div class="field-with-button"><select class="field-input" id="provider-profile"></select><button class="secondary-button" id="provider-new" type="button">新建</button><button class="secondary-button" id="provider-delete" type="button">删除</button></div>
       <label class="field-label" for="provider-label">配置名称</label><input class="field-input" id="provider-label" maxlength="100" placeholder="例如：DeepSeek 主账号">
+      <label class="field-label" for="provider-kind">渠道</label><select class="field-input" id="provider-kind"><option value="deepseek">DeepSeek / 兼容接口</option><option value="deepinfra">DeepInfra</option></select>
       <label class="field-label" for="provider-base-url">API 地址</label><input class="field-input" id="provider-base-url" placeholder="https://api.deepseek.com">
       <label class="field-label" for="provider-model">模型</label><input class="field-input" id="provider-model" maxlength="200" placeholder="deepseek-flash">
+      <div class="provider-protocol-row"><div><label class="field-label" for="provider-format">接口协议</label><select class="field-input" id="provider-format"><option value="responses">Responses</option><option value="chat_completions">Chat Completions</option></select></div><div><label class="field-label" for="provider-tier">服务档位</label><select class="field-input" id="provider-tier"><option value="default">Standard</option><option value="flex">Flex</option><option value="priority">Priority</option></select></div></div>
+      <p class="field-hint" id="provider-tier-hint">Flex 可能排队等待；本服务不会主动改用 Standard。</p>
       <label class="field-label" for="provider-api-key">API Key <span class="field-muted">（留空表示保留已保存的 Key）</span></label><input class="field-input" id="provider-api-key" type="password" autocomplete="new-password" placeholder="输入后保存，页面不会回显完整 Key">
       <div class="settings-row"><label class="check-label"><input type="checkbox" id="provider-previous">使用 previous_response_id 缓存模式</label><select class="field-input compact-input" id="provider-reasoning"><option value="none">推理 none</option><option value="low">推理 low</option><option value="high">推理 high</option><option value="max">推理 max</option></select></div>
       <div class="dialog-actions provider-actions"><button class="primary" id="provider-save" type="button">保存配置并使用</button></div>

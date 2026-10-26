@@ -35,6 +35,7 @@ Platform: ${process.platform}. Shell: Bash (${this.tools.bashPath}). Paths passe
 
 The user or coordinating assistant talks to you in ordinary language, giving a goal, scope, constraints and acceptance criteria. Choose read/write/edit/bash autonomously as needed; do not ask them to select tools or perform work you can execute. Answer questions as questions, and do not treat a request for discussion as permission for unrelated edits.
 Keep tool output small: read relevant line ranges, filter searches, and write large logs/reports to authorized artifact paths instead of printing them. Long tool results are previewed in your context; use tool_result_get with their result_id and offset/limit for details. A preview is not full evidence. Do not rerun a command solely to retrieve its output. Keep final reports concise and reference evidence paths rather than repeating logs or large tables.
+Each model response has an output budget of ${this.config.maxOutputTokens} tokens shared by reasoning, text and tool arguments. Build large files in sections: write a small initial section, then extend it with focused edits or Bash append commands. Avoid generating an entire large script in one write/edit call or Bash heredoc; keep each response's tool arguments well below the output budget.
 Keep the task and its acceptance criteria in the conversation context. Apply explicit follow-up changes and review feedback to the same task. Do not silently invent, weaken or replace acceptance criteria. Ask a focused question when material information is missing and cannot be inferred from the workspace.
 During execution, if you encounter a material problem, dependency, failure, conflict, or decision that the user's plan or instructions do not address, pause before choosing a remedy and ask the user a focused question. If you need to add a new approach or plan, or change or replace any approach the user specified, ask the user for confirmation before implementing that change. Do not silently choose or implement a workaround while waiting. Continue only work independent of the unresolved decision. Routine implementation details that stay within the user's approved plan and scope remain autonomous.
 New user messages may be guidance submitted while you were working. Treat the latest guidance as updates to the current task within its authorized scope, reconcile it with earlier instructions and adapt the plan before continuing. Some earlier tool calls may have been skipped so you can replan; skipped calls did not execute. Do not assume they changed any files. Completed operations remain in place.
@@ -87,6 +88,11 @@ Read relevant AGENTS.md instructions first. File tools are limited to the worksp
     const cached = Math.min(input, Math.max(0, Number(usage?.input_tokens_details?.cached_tokens) || 0));
     s.usage.input += input; s.usage.output += output; s.usage.cached += cached;
     this.updateProviderBudget(s, input);
+    if (new URL(this.config.baseUrl).hostname === 'api.deepinfra.com' && Number.isFinite(usage?.estimated_cost) && usage.estimated_cost >= 0) {
+      const estimate = s.usage.providerEstimate ||= { usd: 0, input: 0, output: 0, cached: 0, calls: 0 };
+      estimate.usd += usage.estimated_cost; estimate.input += input; estimate.output += output; estimate.cached += cached; estimate.calls++;
+      return;
+    }
     const date = beijingDate(at);
     const holiday = this.store.isHolidayOverride(date) || this.holidayCalendar?.isHoliday(date) || false;
     const estimate = estimateDeepSeekFlash({ baseUrl: this.config.baseUrl, model: this.config.model, at,
@@ -150,7 +156,7 @@ Read relevant AGENTS.md instructions first. File tools are limited to the worksp
   }
   private async run(s: Session, signal: AbortSignal) {
     const c = this.config;
-    const providerKey = createHash('sha256').update(JSON.stringify([c.baseUrl, c.model, c.cacheMode, c.apiKey])).digest('hex');
+    const providerKey = createHash('sha256').update(JSON.stringify([c.baseUrl, c.model, c.cacheMode, c.apiKey, c.apiFormat, c.serviceTier])).digest('hex');
     if (s.providerKey !== providerKey) { s.previousResponseId = undefined; s.responseCursor = undefined; s.providerKey = providerKey; }
     const instructions = this.instructions(s);
     let pending: Message | undefined;
@@ -198,6 +204,7 @@ Read relevant AGENTS.md instructions first. File tools are limited to the worksp
           } else throw e;
         }
         if (response.usage) this.recordUsage(s, response.usage, requestedAt);
+        if (response.service_tier) s.usage.lastServiceTier = response.service_tier;
         signal.throwIfAborted();
         s.history.push(...response.output);
         s.previousResponseId = response.id; s.responseCursor = s.history.length;

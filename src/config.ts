@@ -15,6 +15,8 @@ const schema = z.object({
   LABOR_API_KEY: z.string().default(''),
   LABOR_BASE_URL: z.string().url().default('https://api.deepseek.com'),
   LABOR_MODEL: z.string().min(1).default('deepseek-flash'),
+  LABOR_API_FORMAT: z.enum(['responses', 'chat_completions']).default('responses'),
+  LABOR_SERVICE_TIER: z.enum(['default', 'flex', 'priority']).default('default'),
   LABOR_CACHE_MODE: z.enum(['local', 'previous_response_id']).default('local'),
   LABOR_REASONING_EFFORT: z.enum(['none', 'low', 'high', 'max']).default('high'),
   LABOR_MAX_OUTPUT_TOKENS: integer(32768, 256, 131072),
@@ -48,6 +50,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
   return {
     projectRoot, apiKey: c.LABOR_API_KEY.trim(),
     baseUrl: c.LABOR_BASE_URL.replace(/\/+$/, ''), model: c.LABOR_MODEL,
+    apiFormat: c.LABOR_API_FORMAT, serviceTier: c.LABOR_SERVICE_TIER,
     cacheMode: c.LABOR_CACHE_MODE, reasoningEffort: c.LABOR_REASONING_EFFORT,
     maxOutputTokens: c.LABOR_MAX_OUTPUT_TOKENS, contextLimitTokens: c.LABOR_CONTEXT_LIMIT_TOKENS,
     contextWarnRatio: c.LABOR_CONTEXT_WARN_RATIO,

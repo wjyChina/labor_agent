@@ -59,7 +59,7 @@ function deepSeekAgent(session: ReturnType<Store['get']>) {
   // original .env configuration; new sessions carry an explicit profile ID.
   const profile = session.providerId ? providerProfiles.profile(session.providerId) : undefined;
   const runtimeConfig = profile ? providerProfiles.configFor(profile.id) : config;
-  const fingerprint = profile ? JSON.stringify([profile.id, profile.baseUrl, profile.model, profile.apiKey, profile.cacheMode, profile.reasoningEffort]) : 'legacy-env';
+  const fingerprint = profile ? JSON.stringify([profile.id, profile.baseUrl, profile.model, profile.apiKey, profile.cacheMode, profile.reasoningEffort, profile.apiFormat, profile.serviceTier]) : 'legacy-env';
   const existing = deepSeekAgents.get(session.id);
   if (existing && session.status === 'running') return existing.agent;
   if (!existing || existing.fingerprint !== fingerprint) {
@@ -145,7 +145,8 @@ const status = () => {
   if (execution.backend === 'deepseek') {
     try {
       const profile = providerProfiles.profile(execution.profileId);
-      activeProvider = { backend: 'deepseek', profileId: profile.id, label: profile.label, model: profile.model, baseUrl: profile.baseUrl };
+      activeProvider = { backend: 'deepseek', kind: profile.kind, profileId: profile.id, label: profile.label, model: profile.model, baseUrl: profile.baseUrl,
+        apiFormat: profile.apiFormat, serviceTier: profile.serviceTier };
       configured = !!profile.apiKey; baseUrl = profile.baseUrl; model = profile.model; cacheMode = profile.cacheMode;
     } catch {}
   } else {
@@ -177,7 +178,9 @@ app.get('/api/providers', (_req, res) => { res.json(providerProfiles.snapshot())
 app.post('/api/providers', (req, res) => {
   const value = z.object({ id: z.string().min(1).max(100).optional(), label: z.string().trim().min(1).max(100),
     baseUrl: z.string().url(), model: z.string().trim().min(1).max(200), apiKey: z.string().max(500).optional(),
-    cacheMode: z.enum(['local', 'previous_response_id']).default('local'), reasoningEffort: z.enum(['none', 'low', 'high', 'max']).default('high') }).parse(req.body);
+    cacheMode: z.enum(['local', 'previous_response_id']).default('local'), reasoningEffort: z.enum(['none', 'low', 'high', 'max']).default('high'),
+    kind: z.enum(['deepseek', 'deepinfra']).optional(), apiFormat: z.enum(['responses', 'chat_completions']).optional(),
+    serviceTier: z.enum(['default', 'flex', 'priority']).optional() }).parse(req.body);
   res.status(200).json({ provider: providerProfiles.save(value) });
 });
 app.delete('/api/providers/:id', (req, res) => { providerProfiles.remove(req.params.id); res.json({ ok: true }); });

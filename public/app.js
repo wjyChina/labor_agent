@@ -25,11 +25,22 @@ function renderProviderEditor() {
   $('provider-label').value = profile?.label || '';
   $('provider-base-url').value = profile?.baseUrl || 'https://api.deepseek.com';
   $('provider-model').value = profile?.model || 'deepseek-flash';
+  $('provider-kind').value = profile?.kind || 'deepseek';
+  $('provider-format').value = profile?.apiFormat || 'responses';
+  $('provider-tier').value = profile?.serviceTier || 'default';
   $('provider-api-key').value = '';
   $('provider-api-key').placeholder = profile?.apiKeyConfigured ? `已保存 ${profile.apiKeyPreview || 'Key'}，留空保持不变` : '请输入 API Key';
   $('provider-previous').checked = profile?.cacheMode === 'previous_response_id';
   $('provider-reasoning').value = profile?.reasoningEffort || 'high';
+  updateProviderControls();
   $('provider-delete').disabled = (settingsState?.providers?.profiles?.length || 0) <= 1;
+}
+function updateProviderControls() {
+  const chat = $('provider-format').value === 'chat_completions';
+  $('provider-previous').disabled = chat;
+  if (chat) $('provider-previous').checked = false;
+  $('provider-tier').disabled = !chat;
+  $('provider-tier-hint').classList.toggle('hidden', !chat || $('provider-tier').value !== 'flex');
 }
 function renderCodexSettings() {
   const profileSelect = $('settings-codex-profile'), modelSelect = $('settings-codex-model'), previousProfile = profileSelect.value, previousModel = modelSelect.value;
@@ -74,9 +85,11 @@ async function selectExecution(backend, profileId, model) {
   settingsState = await loadSettings(true); await refresh(); renderSettings();
 }
 async function saveProvider() {
-  const body = { ...(providerDraftId ? { id: providerDraftId } : {}), label: $('provider-label').value.trim(), baseUrl: $('provider-base-url').value.trim(), model: $('provider-model').value.trim(), cacheMode: $('provider-previous').checked ? 'previous_response_id' : 'local', reasoningEffort: $('provider-reasoning').value, ...( $('provider-api-key').value ? { apiKey: $('provider-api-key').value } : {}) };
+  const body = { ...(providerDraftId ? { id: providerDraftId } : {}), label: $('provider-label').value.trim(), baseUrl: $('provider-base-url').value.trim(), model: $('provider-model').value.trim(), cacheMode: $('provider-previous').checked ? 'previous_response_id' : 'local', reasoningEffort: $('provider-reasoning').value,
+    kind: $('provider-kind').value, apiFormat: $('provider-format').value, serviceTier: $('provider-tier').value,
+    ...( $('provider-api-key').value ? { apiKey: $('provider-api-key').value } : {}) };
   const result = await api('/api/providers', body); providerDraftId = result.provider.id; settingsState = await loadSettings(true); await selectExecution('deepseek', providerDraftId, result.provider.model);
-  $('provider-api-key').value = ''; renderSettings(); toast('DeepSeek 配置已保存并启用。');
+  $('provider-api-key').value = ''; renderSettings(); toast('API 配置已保存并启用。');
 }
 async function loginSettingsCodex() {
   const profile = selectedSettingsCodexProfile(); if (!profile) return;
@@ -141,6 +154,12 @@ function contextBudgetSummary(budget = {}) {
   return `上下文 ${percent}${status}`;
 }
 function costSummary(usage = {}, fx = state?.usdCnyRate) {
+  if (usage.providerEstimate) {
+    const estimate = usage.providerEstimate;
+    const partial = estimate.input < (usage.input || 0) || estimate.output < (usage.output || 0);
+    return { label: `${partial ? '部分估算' : '费用估算'} ${formatCny(estimate.usd, fx) || formatUsd(estimate.usd)}`,
+      title: `累计 DeepInfra API 返回的 estimated_cost：${formatUsd(estimate.usd)}，共 ${estimate.calls} 次调用。${usage.lastServiceTier ? `最近实际档位：${usage.lastServiceTier}。` : ''}${fx ? `按 USD/CNY ${fx.rate} 折算人民币。` : ''}最终以渠道账单为准。${partial ? '部分历史用量没有费用记录。' : ''}` };
+  }
   const entries = Object.entries(usage.estimatedCosts || {});
   const hasUsage = (usage.input || 0) + (usage.output || 0) > 0;
   if (!entries.length) return {
@@ -347,6 +366,23 @@ function message(m) {
   if (m.kind === 'guidance') heading.append(node('span', `guidance-label ${m.delivery}`, m.delivery === 'queued' ? '引导 · 待应用' : '引导 · 已纳入上下文'));
   heading.append(node('time', '', time(m.time))); body.append(heading, content(m.text)); wrapper.append(body); return wrapper;
 }
+function updateScrollBottomButton() {
+  const scroller = $('conversation'), button = $('scroll-bottom');
+  const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+  const mainRect = scroller.parentElement.getBoundingClientRect();
+  const conversationRect = scroller.getBoundingClientRect();
+  button.style.bottom = `${Math.max(12, mainRect.bottom - conversationRect.bottom + 16)}px`;
+  button.classList.toggle('hidden', !state?.session?.messages?.length || distance < 160);
+}
+$('conversation').addEventListener('scroll', updateScrollBottomButton, { passive: true });
+$('scroll-bottom').addEventListener('click', () => {
+  const scroller = $('conversation');
+  scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+});
+const scrollLayoutObserver = new ResizeObserver(updateScrollBottomButton);
+scrollLayoutObserver.observe($('conversation'));
+scrollLayoutObserver.observe($('messages'));
+scrollLayoutObserver.observe($('composer'));
 function render() {
   if (!state) return;
   const s = state.session, running = s?.status === 'running';
@@ -408,6 +444,7 @@ function render() {
     if (!s?.messages.length) scroller.scrollTop = 0;
     else if (atBottom) scroller.scrollTop = scroller.scrollHeight;
   }
+  updateScrollBottomButton();
 }
 let refreshing = false, refreshAgain = false;
 async function refresh() {
@@ -440,7 +477,16 @@ $('choose-folder').onclick = () => { void chooseFolder(); };
 $('settings').onclick = () => { void openSettings(); };
 $('settings-backend').onchange = () => { if (settingsState) { settingsState.executionDefaults.backend = $('settings-backend').value; renderSettings(); } };
 $('provider-profile').onchange = () => { providerDraftId = $('provider-profile').value; renderProviderEditor(); };
-$('provider-new').onclick = () => { providerDraftId = null; $('provider-profile').value = ''; $('provider-label').value = ''; $('provider-base-url').value = 'https://api.deepseek.com'; $('provider-model').value = 'deepseek-flash'; $('provider-api-key').value = ''; $('provider-api-key').placeholder = '请输入 API Key'; };
+$('provider-new').onclick = () => { providerDraftId = null; $('provider-profile').value = ''; $('provider-label').value = ''; $('provider-base-url').value = 'https://api.deepseek.com'; $('provider-model').value = 'deepseek-flash'; $('provider-kind').value = 'deepseek'; $('provider-format').value = 'responses'; $('provider-tier').value = 'default'; $('provider-api-key').value = ''; $('provider-api-key').placeholder = '请输入 API Key'; updateProviderControls(); };
+$('provider-kind').onchange = () => {
+  const deepinfra = $('provider-kind').value === 'deepinfra';
+  $('provider-base-url').value = deepinfra ? 'https://api.deepinfra.com/v1/openai' : 'https://api.deepseek.com';
+  $('provider-model').value = deepinfra ? 'deepseek-ai/DeepSeek-V4.1-Flash-1017' : 'deepseek-flash';
+  $('provider-format').value = deepinfra ? 'chat_completions' : 'responses';
+  $('provider-tier').value = deepinfra ? 'flex' : 'default'; updateProviderControls();
+};
+$('provider-format').onchange = updateProviderControls;
+$('provider-tier').onchange = updateProviderControls;
 $('provider-save').onclick = () => { void saveProvider().catch(error => { $('settings-error').textContent = error.message; $('settings-error').classList.remove('hidden'); }); };
 $('provider-delete').onclick = () => { void (async () => { await api(`/api/providers/${$('provider-profile').value}/delete`, {}); settingsState = await loadSettings(true); renderSettings(); })().catch(error => { $('settings-error').textContent = error.message; $('settings-error').classList.remove('hidden'); }); };
 $('settings-codex-profile').onchange = () => { renderCodexSettings(); };

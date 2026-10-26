@@ -1,8 +1,9 @@
 import type { Config } from './config.js';
 import type { ApiItem } from './store.js';
 import { toolDefinitions } from './tools.js';
+import { createChatCompletion } from './chat-completions.js';
 
-export type ModelResponse = { id?: string; status?: string; output: ApiItem[]; usage?: any; error?: any; incomplete_details?: any };
+export type ModelResponse = { id?: string; status?: string; output: ApiItem[]; usage?: any; error?: any; incomplete_details?: any; service_tier?: string };
 // No tokenizer is bundled because gateways may use different model tokenizers.
 // This deliberately conservative estimate is used only before a request; the
 // provider's input_tokens value is recorded after each successful response.
@@ -21,7 +22,8 @@ export class ResponsesProvider {
   async create(input: ApiItem[], instructions: string, previousId: string | undefined,
     signal: AbortSignal, onDelta: (text: string) => void): Promise<ModelResponse> {
     const c = this.config;
-    if (!c.apiKey) throw new ProviderError('尚未配置 API Key。请在项目 .env 中填写 LABOR_API_KEY，然后重启服务。', 400);
+    if (!c.apiKey) throw new ProviderError('尚未配置 API Key。请在左下角设置中填写。', 400);
+    if (c.apiFormat === 'chat_completions') return createChatCompletion(c, input, instructions, signal, onDelta);
     const body = { model: c.model, instructions, input, tools: toolDefinitions, tool_choice: 'auto',
       stream: true, max_output_tokens: c.maxOutputTokens, reasoning: { effort: c.reasoningEffort },
       ...(c.cacheMode === 'previous_response_id' ? { store: true, ...(previousId ? { previous_response_id: previousId } : {}) } : {}),

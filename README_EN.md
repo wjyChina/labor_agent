@@ -59,6 +59,8 @@ On macOS/Linux, replace the copy command with `test -f .env || cp .env.example .
 
 ## Install MCP and the skill
 
+DeepInfra is available in the lower-left API profile settings: use `https://api.deepinfra.com/v1/openai`, model `deepseek-ai/DeepSeek-V4.1-Flash-1017`, Chat Completions and the Flex tier. Tokens stay in the local data directory. New sessions inherit the active profile. The adapter supports streaming, tool loops, reasoning replay and cached-token usage, with cost estimates supplied by DeepInfra's `estimated_cost`. Flex uses at least a 15-minute request timeout. Flash 1017 accepts requests configured with 32,768 output tokens; the service caps it at the lower of that value and `LABOR_MAX_OUTPUT_TOKENS`, while other DeepInfra models retain a conservative 16,384 cap. Reasoning and tool arguments share the output budget, so large files should be generated in sections. A `length` error reports usage and argument sizes without executing any tools from that response or retrying automatically. Completed operations and history remain available for a follow-up message. The service does not retry on Standard automatically.
+
 For Codex:
 
 ```powershell

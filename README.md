@@ -50,6 +50,8 @@ npm run stop
 | `LABOR_API_KEY` | 空 | DeepSeek API Key；也接受 `DEEPSEEK_API_KEY` |
 | `LABOR_BASE_URL` | `https://api.deepseek.com` | API 基址；也接受 `DEEPSEEK_BASE_URL`。会追加 `/responses`，也可直接填写完整 `/responses` 地址 |
 | `LABOR_MODEL` | `deepseek-flash` | 模型名；可改为账号/网关支持的其他模型，例如 `deepseek-v4-pro` |
+| `LABOR_API_FORMAT` | `responses` | API 协议：`responses` 或 `chat_completions`；页面配置可为每个渠道单独指定 |
+| `LABOR_SERVICE_TIER` | `default` | Chat Completions 服务档位：`default / flex / priority` |
 | `LABOR_CACHE_MODE` | `local` | `local` 或 `previous_response_id` |
 | `LABOR_REASONING_EFFORT` | `high` | `none / low / high / max` |
 | `LABOR_WORKSPACE` | `.` | 新会话默认工作目录 |
@@ -67,6 +69,12 @@ npm run stop
 | `LABOR_CODEX_DIRECT` | `true` | 是否清理代理环境后启动 Codex；本机有可用代理时可设为 `false` |
 
 `.env` 从本项目根目录读取，与 MCP 客户端当前目录无关。相对路径也以本项目根目录解析；创建会话时提供的相对目录以默认工作目录解析。进程环境变量优先于 `.env`。页面保存的 DeepSeek 配置位于 `.labor-agent/provider-profiles.json`，新建 session 会绑定当前配置；已有 session 保留创建时的配置。Codex 的文件权限模式也在左下角设置中保存，默认是完整权限，可切换为项目写入或只读。修改 `.env`、端口或数据目录需要重启服务；页面保存的账号切换立即对之后新建的 session 生效。不会自动读取 Harness 的密钥。
+
+## DeepInfra 渠道
+
+在左下角“执行账号与模型”选择 API 渠道，新建配置并将渠道选为 DeepInfra。页面会预填地址 `https://api.deepinfra.com/v1/openai`、模型 `deepseek-ai/DeepSeek-V4.1-Flash-1017`、Chat Completions 协议和 Flex 档位。输入自己的 API Token 后保存并启用，新 session 会继承该配置；旧 session 继续使用原渠道。
+
+Chat Completions 使用本地完整历史，不支持 `previous_response_id`。工具调用、流式回复、缓存命中 token 和推理内容续传均经过协议转换；DeepInfra 返回的 `estimated_cost` 累加用于费用显示，`service_tier` 记录实际服务档位。Flex 请求可排队较久，因此该档位将单次超时下限设为 15 分钟；本服务不会为重试主动改用 Standard。Flash 1017 已验证接口接受 32,768 tokens 的输出上限参数，本服务对它取 `LABOR_MAX_OUTPUT_TOKENS` 与 32,768 的较小值，其他 DeepInfra 模型保守限制为 16,384。推理、正文和工具参数共享此预算；大文件应分段生成。遇到 `length` 时显示用量与参数大小，本次响应中的工具调用均不执行，也不自动重试；已完成操作与历史保留，可发送新消息继续。价格与可用性以 [DeepInfra 模型页面](https://deepinfra.com/deepseek-ai/DeepSeek-V4.1-Flash-1017/api) 为准。
 
 ## 在 Codex 中使用 MCP
 

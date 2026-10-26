@@ -27,7 +27,8 @@ export type Session = {
   responseCursor?: number; providerKey?: string; error?: string;
   contextBudget?: ContextBudget;
   backend?: 'deepseek' | 'codex'; providerId?: string; model?: string; codex?: CodexBinding;
-  usage: { input: number; output: number; cached: number; estimatedCosts?: Record<string, EstimatedCost> };
+  usage: { input: number; output: number; cached: number; lastServiceTier?: string; estimatedCosts?: Record<string, EstimatedCost>;
+    providerEstimate?: { usd: number; input: number; output: number; cached: number; calls: number } };
 };
 
 export class AppError extends Error {
