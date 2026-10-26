@@ -137,8 +137,15 @@ Read relevant AGENTS.md instructions first. File tools are limited to the worksp
     if (s.messages.filter(m => m.role === 'user').length === 1 && s.title === '新会话') s.title = text.trim().slice(0, 32);
     s.status = 'running'; s.error = undefined; this.store.save(s);
     const controller = new AbortController();
+    const startedAt = new Date(), started = performance.now();
+    this.store.beginAgentRun(s);
     // Defer execution so the run is registered before any await or callback.
     const promise = Promise.resolve().then(() => this.run(s, controller.signal)).finally(() => {
+      const completedAt = new Date();
+      this.store.recordAgentRun(s, { schemaVersion: 1, scope: 'agent_run', startedAt: startedAt.toISOString(),
+        completedAt: completedAt.toISOString(), durationMs: Math.max(0, Math.round(performance.now() - started)),
+        backend: 'deepseek', providerId: s.providerId, model: s.model || this.config.model,
+        status: s.status === 'cancelled' ? 'cancelled' : s.status === 'error' ? 'error' : 'idle' });
       this.runs.delete(s.id); this.store.emit('change', { sessionId: s.id });
     });
     this.runs.set(s.id, { controller, promise }); return promise;

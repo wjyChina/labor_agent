@@ -28,6 +28,12 @@ export type ModelRequestMetric = {
   responseStatus?: string; errorStatus?: number; inputTokens?: number; outputTokens?: number;
   cachedTokens?: number; reasoningTokens?: number; estimatedCostUsd?: number; timeToFirstTextMs?: number;
 };
+export type AgentRunMetric = {
+  schemaVersion: 1; scope: 'agent_run'; startedAt: string; completedAt: string; durationMs: number;
+  backend: 'deepseek' | 'codex'; providerId?: string; model: string;
+  status: 'idle' | 'error' | 'cancelled';
+};
+export type AdaptiveWait = { waitMs: number; elapsedMs: number; p80Ms?: number; sampleSize: number; source: 'history_p80' | 'fallback' | 'not_running' | 'explicit' };
 export type Session = {
   id: string; title: string; workspace: string; createdAt: string; updatedAt: string;
   status: 'idle' | 'running' | 'error' | 'cancelled';
@@ -54,6 +60,7 @@ export function atomicWrite(file: string, text: string) {
 
 export class Store extends EventEmitter {
   sessions = new Map<string, Session>();
+  private runStartedAt = new Map<string, number>();
   activeSessionId: string | null = null;
   holidayOverrideDate: string | null = null;
   executionDefaults: ExecutionDefaults = { backend: 'deepseek', codexSandbox: 'danger-full-access' };
@@ -141,6 +148,50 @@ export class Store extends EventEmitter {
     } catch {
       // Telemetry must not turn a successful or billable model call into an agent failure.
       console.error('无法保存模型耗时记录。');
+    }
+  }
+  beginAgentRun(s: Session) { this.runStartedAt.set(s.id, Date.now()); }
+  recordAgentRun(s: Session, metric: AgentRunMetric) {
+    this.runStartedAt.delete(s.id);
+    try {
+      const dir = path.join(this.dir, 'metrics');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.appendFileSync(path.join(dir, 'agent-runs.jsonl'), `${JSON.stringify(metric)}\n`, { encoding: 'utf8', mode: 0o600 });
+    } catch {
+      console.error('无法保存 Agent 运行耗时记录。');
+    }
+  }
+  adaptiveWait(s: Session): AdaptiveWait {
+    const startedAt = this.runStartedAt.get(s.id);
+    if (s.status !== 'running' || startedAt === undefined)
+      return { waitMs: 0, elapsedMs: 0, sampleSize: 0, source: 'not_running' };
+    const elapsedMs = Math.max(0, Date.now() - startedAt);
+    const maxWaitMs = 55_000;
+    try {
+      const file = path.join(this.dir, 'metrics', 'agent-runs.jsonl');
+      if (!fs.existsSync(file)) return { waitMs: maxWaitMs, elapsedMs, sampleSize: 0, source: 'fallback' };
+      const rows = fs.readFileSync(file, 'utf8').split(/\r?\n/).filter(Boolean).slice(-500);
+      const history: AgentRunMetric[] = [];
+      for (const row of rows) {
+        try {
+          const value = JSON.parse(row);
+          if (value.schemaVersion === 1 && value.scope === 'agent_run' &&
+              (value.backend === 'deepseek' || value.backend === 'codex') &&
+              typeof value.durationMs === 'number' && Number.isFinite(value.durationMs) && value.durationMs >= 1000 &&
+              (value.status === 'idle' || value.status === 'error') && typeof value.model === 'string') history.push(value);
+        } catch { /* Ignore malformed historical rows. */ }
+      }
+      const backend = s.backend || 'deepseek', model = s.codex?.model || s.model || '';
+      const forBackend = history.filter(item => item.backend === backend);
+      const exact = forBackend.filter(item => item.model === model && item.providerId === (s.backend === 'codex' ? s.codex?.profileId : s.providerId));
+      const sample = exact.length >= 5 ? exact.slice(-100) : forBackend.slice(-100);
+      if (sample.length < 5) return { waitMs: maxWaitMs, elapsedMs, sampleSize: sample.length, source: 'fallback' };
+      const sorted = sample.map(item => item.durationMs).sort((a, b) => a - b);
+      const p80Ms = sorted[Math.ceil(sorted.length * 0.8) - 1];
+      const waitMs = elapsedMs >= p80Ms ? maxWaitMs : Math.max(1000, Math.min(maxWaitMs, Math.round(p80Ms - elapsedMs)));
+      return { waitMs, elapsedMs, p80Ms, sampleSize: sample.length, source: 'history_p80' };
+    } catch {
+      return { waitMs: maxWaitMs, elapsedMs, sampleSize: 0, source: 'fallback' };
     }
   }
   add(s: Session, message: Omit<Message, 'id' | 'time'>) {

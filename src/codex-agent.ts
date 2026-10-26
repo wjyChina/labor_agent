@@ -28,8 +28,17 @@ export class CodexAgent {
     const user = this.store.add(s, { role: 'user', text: text.trim(), source });
     if (s.title === '新会话') s.title = text.trim().slice(0, 32);
     s.status = 'running'; s.error = undefined; this.store.save(s);
+    const startedAt = new Date(), started = performance.now();
+    this.store.beginAgentRun(s);
     const run: Run = { cancelled: false, promise: Promise.resolve() };
-    run.promise = Promise.resolve().then(() => this.run(s, user, run)).finally(() => { this.runs.delete(s.id); this.store.emit('change', { sessionId: s.id }); });
+    run.promise = Promise.resolve().then(() => this.run(s, user, run)).finally(() => {
+      const completedAt = new Date();
+      this.store.recordAgentRun(s, { schemaVersion: 1, scope: 'agent_run', startedAt: startedAt.toISOString(),
+        completedAt: completedAt.toISOString(), durationMs: Math.max(0, Math.round(performance.now() - started)),
+        backend: 'codex', providerId: s.codex?.profileId, model: s.codex?.model || 'Codex',
+        status: s.status === 'cancelled' ? 'cancelled' : s.status === 'error' ? 'error' : 'idle' });
+      this.runs.delete(s.id); this.store.emit('change', { sessionId: s.id });
+    });
     this.runs.set(s.id, run); return run.promise;
   }
   guide(s: Session, text: string, source: 'mcp' | 'web') {

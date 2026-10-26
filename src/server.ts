@@ -222,13 +222,16 @@ app.post('/api/pricing/holiday-override', (req, res) => {
 app.get('/api/sessions', (_req, res) => { res.json({ activeSessionId: store.activeSessionId, sessions: store.list() }); });
 app.get('/api/sessions/:id', (req, res) => { res.json(store.view(store.get(req.params.id))); });
 app.get('/api/sessions/:id/wait', async (req, res) => {
-  const { wait_ms } = z.object({ wait_ms: z.coerce.number().int().min(0).max(55000).default(0) })
+  const { wait_ms } = z.object({ wait_ms: z.coerce.number().int().min(0).max(55000).optional() })
     .parse({ wait_ms: req.query.wait_ms });
   const id = req.params.id;
   const startedAt = Date.now();
   const session = store.get(id);
+  const waitPolicy = wait_ms === undefined ? store.adaptiveWait(session)
+    : { waitMs: wait_ms, elapsedMs: 0, sampleSize: 0, source: 'explicit' as const };
+  const waitLimitMs = session.status === 'running' ? waitPolicy.waitMs : 0;
   let waitResult: 'terminal' | 'timeout' | 'not_running' | 'disconnected' = 'not_running';
-  if (session.status === 'running' && wait_ms > 0) {
+  if (session.status === 'running' && waitLimitMs > 0) {
     waitResult = await new Promise<'terminal' | 'timeout' | 'disconnected'>(resolve => {
       let settled = false;
       let timer: NodeJS.Timeout | undefined;
@@ -247,13 +250,14 @@ app.get('/api/sessions/:id/wait', async (req, res) => {
       const onClose = () => finish('disconnected');
       store.on('change', onChange);
       res.once('close', onClose);
-      timer = setTimeout(() => finish('timeout'), wait_ms);
+      timer = setTimeout(() => finish('timeout'), waitLimitMs);
       // Close the small race between the initial status check and event subscription.
       if (store.get(id).status !== 'running') finish('terminal');
     });
     if (res.destroyed || waitResult === 'disconnected') return;
   }
-  res.json({ ...store.view(store.get(id)), waitResult, waitedMs: Date.now() - startedAt });
+  res.json({ ...store.view(store.get(id)), waitResult, waitedMs: Date.now() - startedAt,
+    waitPolicy: { ...waitPolicy, waitMs: waitLimitMs } });
 });
 const sessionCreateSchema = z.object({ title: z.string().trim().min(1).max(100).optional(), workspace: z.string().min(1).optional(),
   backend: z.enum(['deepseek', 'codex']).optional(), profile_id: z.string().optional(), model: z.string().optional() });
@@ -282,9 +286,10 @@ app.post('/api/sessions/:id/rename', async (req, res) => {
 });
 app.post('/api/sessions/:id/send', async (req, res) => {
   const { text, source, wait_ms } = z.object({ text: z.string().min(1).max(100000),
-    source: z.enum(['web', 'mcp']).default('web'), wait_ms: z.number().int().min(0).max(55000).default(0) }).parse(req.body);
+    source: z.enum(['web', 'mcp']).default('web'), wait_ms: z.number().int().min(0).max(55000).optional() }).parse(req.body);
   const session = store.get(req.params.id);
   const runner = runnerFor(session);
+  let waitPolicy: ReturnType<typeof store.adaptiveWait> | undefined;
   if (session.status === 'running') {
     runner.guide(session, text, source);
     // Acknowledging guidance must not wait for the running task to finish.
@@ -297,9 +302,10 @@ app.post('/api/sessions/:id/send', async (req, res) => {
       throw error;
     }
     void run.catch(e => console.error('Agent persistence error:', e));
-    await runner.wait(session, wait_ms);
+    if (source === 'mcp' && wait_ms === undefined) waitPolicy = store.adaptiveWait(session);
+    await runner.wait(session, wait_ms ?? waitPolicy?.waitMs ?? 0);
   }
-  res.json(store.view(session));
+  res.json({ ...store.view(session), ...(waitPolicy ? { waitPolicy } : {}) });
 });
 app.post('/api/sessions/:id/cancel', (req, res) => {
   const session = store.get(req.params.id); runnerFor(session).cancel(session); res.json({ ok: true, sessionId: session.id });
