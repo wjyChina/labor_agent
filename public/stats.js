@@ -187,8 +187,14 @@ function render() {
   for (const [index, config] of data.configs.entries()) {
     const label = el('label', 'config-option'), input = document.createElement('input');
     input.type = 'checkbox'; input.checked = selected.has(config.id); input.value = config.id;
-    input.addEventListener('change', () => { input.checked ? selected.add(config.id) : selected.delete(config.id); renderViews(); });
-    const text = el('span', '', config.label); text.title = config.label; label.append(input, text); label.style.setProperty('--config-color', colors[index % colors.length]); configsRoot.append(label);
+    input.addEventListener('change', () => {
+      label.classList.toggle('selected', input.checked);
+      input.checked ? selected.add(config.id) : selected.delete(config.id);
+      renderViews();
+    });
+    label.classList.toggle('selected', input.checked);
+    const text = el('span', '', config.label); text.title = config.label;
+    label.append(input, text); label.style.setProperty('--config-color', colors[index % colors.length]); configsRoot.append(label);
   }
   renderViews();
 }
