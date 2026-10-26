@@ -4,6 +4,18 @@
 
 Let an execution agent handle implementation while the primary AI plans and verifies. Labor Agent defaults to DeepSeek and offers MCP collaboration with a live chat UI. Its lightweight core is independently implemented, inspired by DeepSeek Harness's minimal interaction style; it does not require the Harness application.
 
+The browser and MCP share sessions and execution records. The lower-left settings let you switch between DeepSeek API and Codex subscription profiles. The statistics page summarizes token usage, cache-hit rate, output speed and estimated API cost. These screenshots are from the running local UI; session identifiers, project paths and personal usage figures are hidden.
+
+<table>
+  <tr>
+    <td align="center"><a href="docs/screenshots/workbench.png"><img src="docs/screenshots/workbench.png" width="420" alt="Labor Agent workbench"></a><br>Workbench</td>
+    <td align="center"><a href="docs/screenshots/execution-settings.png"><img src="docs/screenshots/execution-settings.png" width="220" alt="Execution settings"></a><br>Execution settings</td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><a href="docs/screenshots/token-statistics.png"><img src="docs/screenshots/token-statistics.png" width="640" alt="Token usage statistics"></a><br>Token usage statistics</td>
+  </tr>
+</table>
+
 ## Why use it
 
 - **Reduce cost:** delegate suitable complex implementation and multi-step commands to a configurable execution model. The primary AI reads final results and essential evidence first, reducing process context and tool rounds on the primary model.
@@ -14,7 +26,7 @@ Let an execution agent handle implementation while the primary AI plans and veri
 
 - Autonomous `read / write / edit / bash`, with tasks and acceptance criteria supplied through ordinary conversation.
 - A shared backend for stdio MCP and the browser UI, with persistent sessions and a workspace per session.
-- AI-created/selected sessions; the browser supports observation, conversation, steering and cancellation, with no session creation button.
+- Create and select sessions in the browser, choose a project folder, and inspect, steer or cancel execution; MCP can also create and manage sessions.
 - Mid-task guidance and cancellation of requests and Bash process trees; no fixed 40-model-call limit in the current implementation.
 - Responses API, full local history replay, and per-session cache-hit counts and rates; configurable API key, URL and model.
 - Per-session RMB cost estimates for DeepSeek Flash. USD usage is priced at each request's peak/off-peak rate, then converted using a daily updated [USD/CNY mid-market rate](https://frankfurter.dev/); displayed historical RMB amounts change when the rate updates. Cache hits are a subset of input tokens. Chinese public holidays sync from the [Hi8 holiday API](https://hi8.com/t/jiejiari-api) at startup and daily to a local cache; failed updates retain the previous data, and manual holiday marking remains available. Other models and legacy usage without period data are not estimated.
@@ -23,6 +35,7 @@ Let an execution agent handle implementation while the primary AI plans and veri
 - The UI renders common Markdown in user and agent messages, including headings, lists, links, quotes, tables and code blocks; tool output remains plain text.
 - The “Execution account and model” control in the lower-left corner selects the global backend: DeepSeek API or a Codex subscription. DeepSeek endpoint, model and API keys can be saved as multiple local profiles; Codex accounts and models are managed there too. New sessions inherit the selected global setting.
 - The “+” button creates a session and lets you choose a project folder. The folder is saved as the session workspace; with the Codex global setting it is also passed as the Codex thread `cwd`, so Codex can group it by project.
+- The statistics page provides a token-usage heatmap, output-speed chart and cost estimates. Cost is estimated only where the provider returns enough usage data; it is not a final invoice.
 
 ## Deployment
 

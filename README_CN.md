@@ -4,6 +4,18 @@
 
 把具体实现交给执行 Agent，把规划和验收留给主 AI。Labor Agent 默认连接 DeepSeek，支持 MCP 协作和实时网页对话；采用独立轻量内核，参考 DeepSeek Harness 极简交互，不依赖其安装程序。
 
+网页与 MCP 共用会话和执行记录。左下角可切换 DeepSeek API 或 Codex 订阅配置；统计页可查看 Token 消耗、缓存命中率、输出速度和费用估算。以下是实际运行界面截图，会话标识、项目路径及个人用量数字已遮盖。
+
+<table>
+  <tr>
+    <td align="center"><a href="docs/screenshots/workbench.png"><img src="docs/screenshots/workbench.png" width="420" alt="Labor Agent 工作台"></a><br>工作台</td>
+    <td align="center"><a href="docs/screenshots/execution-settings.png"><img src="docs/screenshots/execution-settings.png" width="220" alt="执行配置"></a><br>执行配置</td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><a href="docs/screenshots/token-statistics.png"><img src="docs/screenshots/token-statistics.png" width="640" alt="Token 使用统计"></a><br>Token 使用统计</td>
+  </tr>
+</table>
+
 ## 为什么用它
 
 - **省钱**：将适合的复杂代码实现和多步骤命令交给可配置的执行模型，主 AI 默认只看最终结果和必要证据，减少主模型的过程上下文与执行轮次。
@@ -14,7 +26,7 @@
 
 - 自主使用 `read / write / edit / bash`，通过普通对话接收任务和验收标准。
 - stdio MCP 与网页共享后台、持久会话和执行记录；每个会话可指定工作目录。
-- AI 创建/选择会话；网页可观察、对话、引导和停止，无新建会话按钮。
+- 网页可新建、选择和查看会话，选择项目文件夹，并在执行中对话、引导或停止；MCP 也可创建和管理会话。
 - 支持执行中引导、停止请求及 Bash 进程树；当前没有固定40次模型调用上限。
 - Responses API、本地完整历史续传、每个 session 的缓存命中量与命中率展示；支持可配置 API Key、URL 和模型。
 - 按 session 展示 DeepSeek Flash 的人民币费用估算：先按请求时段累计美元费用，再按每日更新的 [USD/CNY 中间汇率](https://frankfurter.dev/)折算；汇率变化时历史 session 的人民币金额也会更新。节假日从 [Hi8 节假日 API](https://hi8.com/t/jiejiari-api) 启动时同步并每日更新到本地缓存，失败时保留旧数据，网页可手动标记。其他模型及缺少分时记录的旧用量不估价。
@@ -23,6 +35,7 @@
 - 网页会渲染用户和 Agent 回复中的常用 Markdown，包括标题、列表、链接、引用、表格和代码块；工具结果保持纯文本展示。
 - 左下角“执行账号与模型”可以统一切换 DeepSeek API 或 Codex 订阅；DeepSeek 的 API 地址、模型、Key 可保存多个配置，Codex 账号和模型也在这里选择。新建 session 只选择项目文件夹，并自动继承当前全局执行设置。
 - 网页左侧“＋”可以新建 session 并选择项目文件夹；目录会作为 workspace 保存。使用 Codex 全局设置时，该目录会作为 Codex thread 的 `cwd`，便于 Codex 按项目展示。
+- 统计页提供 Token 消耗热图、输出速度曲线和费用估算；费用只对有对应渠道用量数据的请求估算，不代表最终账单。
 
 ## 部署
 

@@ -2,9 +2,23 @@
 
 [简明中文指南](README_CN.md) · [English guide](README_EN.md)
 
-一个简易的本地编程 Agent。默认使用 **DeepSeek + Responses API**，自主选择 `read / write / edit / bash`，可通过 **stdio MCP** 对话协作，也可直接在浏览器里对话。MCP 与界面共享同一个后台和会话；从 MCP 发来的消息显示为「协作助手」，回复和执行记录实时可见。界面无需选择工具，只需描述任务、要求和验收标准。
+Labor Agent 是运行在本机的编程执行 Agent。它通过网页或 MCP 接收任务，在指定项目目录里使用 `read / write / edit / bash` 工具工作。网页与 MCP 共用后台、持久会话和执行记录；可在左下角切换 DeepSeek API、Codex 订阅及已保存的执行配置。统计页汇总 Token、缓存命中率、输出速度和 API 费用估算，费用会因渠道数据与计价规则而有差异。
 
-使用独立的轻量工具循环内核；参考 DeepSeek Harness 极简交互，不依赖、复制或修改已安装的 Harness 私有运行时。
+核心使用独立实现的轻量工具循环；交互方式受 DeepSeek Harness 启发，不依赖、复制或修改 Harness 的私有运行时。
+
+## 界面预览
+
+以下截图来自实际运行的本地界面；会话标识、项目路径和个人用量数字已遮盖。
+
+<table>
+  <tr>
+    <td align="center"><a href="docs/screenshots/workbench.png"><img src="docs/screenshots/workbench.png" width="420" alt="Labor Agent 工作台"></a><br>工作台：会话、项目目录与实时执行状态</td>
+    <td align="center"><a href="docs/screenshots/execution-settings.png"><img src="docs/screenshots/execution-settings.png" width="220" alt="执行账号与模型设置"></a><br>执行账号与模型配置</td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><a href="docs/screenshots/token-statistics.png"><img src="docs/screenshots/token-statistics.png" width="640" alt="Token 使用统计"></a><br>Token 消耗、缓存命中、输出速度和费用估算</td>
+  </tr>
+</table>
 
 ## 快速启动
 
