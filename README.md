@@ -83,7 +83,7 @@ npm run build
 npm run setup:mcp
 ```
 
-会生成当前项目的 `.codex/config.toml`，使用本机 Node 的绝对路径运行 `dist/mcp.js`。在 Codex 中重新打开此项目或重启会话以加载 MCP。项目配置需要项目已受信任；参见 [Codex 官方 MCP 文档](https://learn.chatgpt.com/docs/extend/mcp)。当前已运行的聊天不会因为文件写入就自动获得新工具。
+会生成或更新当前项目的 `.codex/config.toml`，使用本机 Node 的绝对路径运行 `dist/mcp.js`，并将 MCP 工具超时设为 1860 秒（等待上限 30 分钟，另留 1 分钟余量）。在 Codex 中重新打开此项目或重启会话以加载 MCP。项目配置需要项目已受信任；参见 [Codex 官方 MCP 文档](https://learn.chatgpt.com/docs/extend/mcp)。当前已运行的聊天不会因为文件写入就自动获得新工具。
 
 其他 MCP 客户端可使用（将路径改成本机实际路径）：
 
@@ -105,9 +105,9 @@ npm run setup:mcp
 | `session_list` | 列出会话和当前选择 |
 | `session_select` | 用 `session_id` 切换当前默认会话；普通协作显式传 `session_id` 即可 |
 | `session_get` | 读取对话和工具记录；工具结果默认只给摘要，可按角色过滤、向前分页，或按消息 ID 读取完整内容 |
-| `agent_send` | 传 `text` 对话；空闲时启动一轮，执行中自动作为引导。可传 `session_id`、`wait_ms`（0–55000；省略时按历史动态等待，引导立即确认） |
+| `agent_send` | 传 `text` 对话；空闲时启动一轮，执行中自动作为引导。可传 `session_id`、`wait_ms`（0–1800000；省略时按历史动态等待，引导立即确认） |
 | `agent_status` | 立即查询执行状态和最近记录；可选 `wait_ms` |
-| `agent_wait` | 等待会话结束或超时；省略 `wait_ms` 时按历史动态等待，单次最长 55 秒 |
+| `agent_wait` | 等待会话结束或超时；省略 `wait_ms` 时按历史动态等待，单次最长 30 分钟 |
 | `agent_cancel` | 中止指定/当前会话的请求与 Bash 进程树 |
 
 典型调用顺序：
@@ -122,7 +122,7 @@ session_get {"limit":30}
 
 `session_get` 默认返回最近 30 条消息；工具结果与工具参数仅提供短预览，并受总字符预算限制。需要核对某条结果时，把返回的消息 `id` 传入 `message_ids`，即可读取指定消息的完整文本；若返回 `textTruncated: true`，可增大 `max_chars`。`roles` 用于筛选 `user`、`assistant`、`tool`、`system`，`before_message_id` 用于向前分页。读取完整工具参数需显式设置 `include_tool_args: true`。session 元数据还会返回 `contextBudget`，包括估算 token、配置上限、预留输出和当前比例。
 
-为减少主 AI 的轮询开销，省略 `agent_send` 和 `agent_wait` 的 `wait_ms` 可启用历史自适应等待：系统优先按同一后端、配置和模型最近最多 100 次完成任务的 P80 估算剩余时长；精确配置样本不足时改用同后端历史，样本仍不足 5 次时使用 55 秒。单次等待最长 55 秒；超过历史 P80 仍未结束时，后续继续按 55 秒等待。等待工具监听会话状态变化，结束、报错或取消时立即返回。等待历史写入 `.labor-agent/metrics/agent-runs.jsonl`；也可显式传 `wait_ms`（0–55000）覆盖默认值。不要用 `agent_send` 发送“继续/等待”来轮询，因为运行中的发送会成为任务引导。
+为减少主 AI 的轮询开销，省略 `agent_send` 和 `agent_wait` 的 `wait_ms` 可启用历史自适应等待：系统优先按同一后端、配置和模型最近最多 100 次完成任务的 P80 估算剩余时长；精确配置样本不足时改用同后端历史，样本仍不足 5 次时等待 30 分钟。单次等待最长 30 分钟；超过历史 P80 仍未结束时，后续继续等待 30 分钟。等待工具监听会话状态变化，结束、报错或取消时立即返回，不会固定等满时限。等待历史写入 `.labor-agent/metrics/agent-runs.jsonl`；也可显式传 `wait_ms`（0–1800000）覆盖默认值。不要用 `agent_send` 发送“继续/等待”来轮询，因为运行中的发送会成为任务引导。
 
 工具未传 `session_id` 时使用当前选中的会话。长任务返回 `running` 后会继续执行，通过 `agent_wait` 等它结束；`agent_status` 用于立即查看状态。不要为了轮询重复 `agent_send`，运行中再次发送的文本会成为当前任务的引导。空闲时发送才启动新一轮。同一会话同时只运行一轮，不同会话可独立运行。读写同一个工作目录时，应避免给不同会话下发冲突的任务。
 

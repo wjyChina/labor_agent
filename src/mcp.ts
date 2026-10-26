@@ -4,10 +4,11 @@ import { z } from 'zod';
 import { loadConfig } from './config.js';
 import { ensureService, request } from './service.js';
 import type { Message } from './store.js';
+import { MAX_AGENT_WAIT_MS, MCP_WAIT_HTTP_TIMEOUT_MS } from './wait-policy.js';
 
 const config = loadConfig();
 const server = new McpServer({ name: 'labor-agent', version: '0.1.0' }, {
-  instructions: 'Labor Agent is an autonomous local DeepSeek coding partner. Use MCP tools for all ordinary task interaction; do not open or operate the local browser UI to send tasks, select sessions, poll status, or read transcripts. The backend opens the UI when the service starts. Use one session per task or deliverable stage. Reuse it for corrections or resuming that unfinished task; once accepted, create a fresh session for the next task or stage even in the same workspace. Carry over only the goal, constraints, acceptance criteria and relevant artifact paths, not full transcripts. Pass an explicit session_id to MCP calls. Talk to it using agent_send: explain the goal, scope, constraints and acceptance criteria in ordinary language. It chooses its own tools. Leave wait_ms unset for agent_send and agent_wait to use the adaptive wait based on recent completed-run P80; it falls back to 55 seconds until enough history exists, and each call is capped at 55 seconds. If a wait returns running, call agent_wait again without wait_ms. Do not do unrelated preparation or repeatedly read the transcript while waiting. While running, agent_send queues new guidance instead of starting another run; only send it to correct direction or resolve a blocker, never as a wait command. Guidance is applied before the next model call; the active tool finishes and unstarted older calls are skipped so it can replan. Do not resubmit the original task when polling. If agent_send reports a context budget warning, create a new session with the same workspace and carry over the goal and unfinished work; do not keep retrying the blocked session. Use agent_cancel to stop the active request/tool immediately. Prefer status and the final deliverable report; inspect recent process records only when needed, starting with the latest task turn. session_get returns compact tool-result previews by default; when a specific result is needed, call it again with that message ID in message_ids to fetch full text, and increase max_chars if it is truncated. Use before_message_id to page backwards and roles to filter. Then verify the outcome. idle means the turn ended, not acceptance passed. Only use browser tools when the user explicitly asks you to inspect or operate the UI.',
+  instructions: 'Labor Agent is an autonomous local DeepSeek coding partner. Use MCP tools for all ordinary task interaction; do not open or operate the local browser UI to send tasks, select sessions, poll status, or read transcripts. The backend opens the UI when the service starts. Use one session per task or deliverable stage. Reuse it for corrections or resuming that unfinished task; once accepted, create a fresh session for the next task or stage even in the same workspace. Carry over only the goal, constraints, acceptance criteria and relevant artifact paths, not full transcripts. Pass an explicit session_id to MCP calls. Talk to it using agent_send: explain the goal, scope, constraints and acceptance criteria in ordinary language. It chooses its own tools. Leave wait_ms unset for agent_send and agent_wait to use the adaptive wait based on recent completed-run P80; it falls back to 30 minutes until enough history exists, and each call is capped at 30 minutes. If a wait returns running, call agent_wait again without wait_ms. Do not do unrelated preparation or repeatedly read the transcript while waiting. While running, agent_send queues new guidance instead of starting another run; only send it to correct direction or resolve a blocker, never as a wait command. Guidance is applied before the next model call; the active tool finishes and unstarted older calls are skipped so it can replan. Do not resubmit the original task when polling. If agent_send reports a context budget warning, create a new session with the same workspace and carry over the goal and unfinished work; do not keep retrying the blocked session. Use agent_cancel to stop the active request/tool immediately. Prefer status and the final deliverable report; inspect recent process records only when needed, starting with the latest task turn. session_get returns compact tool-result previews by default; when a specific result is needed, call it again with that message ID in message_ids to fetch full text, and increase max_chars if it is truncated. Use before_message_id to page backwards and roles to filter. Then verify the outcome. idle means the turn ended, not acceptance passed. Only use browser tools when the user explicitly asks you to inspect or operate the UI.',
 });
 const sessionId = z.string().uuid().optional().describe('Session ID. Omit to use the currently selected session.');
 const annotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
@@ -84,7 +85,7 @@ function sessionMetadata(s: any) {
 }
 async function sessionStatus(id: string, waitMs?: number) {
   const s = waitMs === undefined || waitMs > 0
-    ? await request(config, `/api/sessions/${id}/wait${waitMs === undefined ? '' : `?wait_ms=${waitMs}`}`)
+    ? await request(config, `/api/sessions/${id}/wait${waitMs === undefined ? '' : `?wait_ms=${waitMs}`}`, undefined, MCP_WAIT_HTTP_TIMEOUT_MS)
     : await request(config, `/api/sessions/${id}`);
   const formatted = formatMessages(s.messages.slice(-4), { full: false, maxChars: 3_000, toolPreviewChars: 250 });
   return {
@@ -182,12 +183,12 @@ server.registerTool('session_get', {
   };
 }));
 server.registerTool('agent_send', {
-  description: 'Talk to the coding agent in ordinary text. When idle, starts a conversational turn; if wait_ms is omitted, waits for a dynamically estimated duration based on recent completed-run P80 (fallback 55s, max 55s). While running, immediately queues the text as guidance for the current task, never starting a parallel run. Guidance takes effect at the next model call after the active tool finishes; unstarted older calls are skipped. pendingGuidance and message.delivery show queued/applied state. The agent chooses tools and may modify files. If the context budget reaches its configured warning threshold, the request is rejected before the model call and the response explains that a new session is required. Recent tool results in this response are previews; use session_get with a returned message ID in message_ids to fetch a full result. Use agent_wait to wait for completion, agent_status for an immediate snapshot, and do not repeat the original task. agent_cancel stops immediately.',
+  description: 'Talk to the coding agent in ordinary text. When idle, starts a conversational turn; if wait_ms is omitted, waits for a dynamically estimated duration based on recent completed-run P80 (fallback 30m, max 30m). While running, immediately queues the text as guidance for the current task, never starting a parallel run. Guidance takes effect at the next model call after the active tool finishes; unstarted older calls are skipped. pendingGuidance and message.delivery show queued/applied state. The agent chooses tools and may modify files. If the context budget reaches its configured warning threshold, the request is rejected before the model call and the response explains that a new session is required. Recent tool results in this response are previews; use session_get with a returned message ID in message_ids to fetch a full result. Use agent_wait to wait for completion, agent_status for an immediate snapshot, and do not repeat the original task. agent_cancel stops immediately.',
   inputSchema: { text: z.string().min(1).max(100000), session_id: sessionId,
-    wait_ms: z.number().int().min(0).max(55000).optional() },
+    wait_ms: z.number().int().min(0).max(MAX_AGENT_WAIT_MS).optional() },
   annotations: { ...annotations, destructiveHint: true },
 }, ({ text, session_id, wait_ms }) => call(async () => {
-  const s = await request(config, `/api/sessions/${await resolveId(session_id)}/send`, { text, source: 'mcp', wait_ms });
+  const s = await request(config, `/api/sessions/${await resolveId(session_id)}/send`, { text, source: 'mcp', wait_ms }, MCP_WAIT_HTTP_TIMEOUT_MS);
   const formatted = formatMessages(s.messages.slice(-12), { full: false, maxChars: 6_000, toolPreviewChars: 350 });
   return { ...sessionMetadata(s), totalMessages: s.messages.length, messages: formatted.messages,
     ...(s.waitPolicy ? { waitPolicy: s.waitPolicy } : {}),
@@ -196,15 +197,15 @@ server.registerTool('agent_send', {
 }));
 server.registerTool('agent_status', {
   description: 'Get a session status snapshot with compact tool-result previews. By default this returns immediately; if wait_ms is positive, it returns when the run ends or that wait expires. Prefer agent_wait for blocking waits. Use session_get with a returned message ID in message_ids to fetch a full result.',
-  inputSchema: { session_id: sessionId, wait_ms: z.number().int().min(0).max(55000).default(0) },
+  inputSchema: { session_id: sessionId, wait_ms: z.number().int().min(0).max(MAX_AGENT_WAIT_MS).default(0) },
   annotations: { ...annotations, readOnlyHint: true, idempotentHint: true },
 }, ({ session_id, wait_ms }) => call(async () => {
   const id = await resolveId(session_id);
   return sessionStatus(id, wait_ms);
 }));
 server.registerTool('agent_wait', {
-  description: 'Wait for a running Labor Agent session to reach idle, error or cancelled, returning immediately on the state change. If wait_ms is omitted, use the adaptive duration based on recent completed-run P80; it falls back to 55s without enough history and is capped at 55s. A timeout returns the current running status. Prefer this to repeated agent_status polling; it does not send guidance to the running task.',
-  inputSchema: { session_id: sessionId, wait_ms: z.number().int().min(1).max(55000).optional() },
+  description: 'Wait for a running Labor Agent session to reach idle, error or cancelled, returning immediately on the state change. If wait_ms is omitted, use the adaptive duration based on recent completed-run P80; it falls back to 30m without enough history and is capped at 30m. A timeout returns the current running status. Prefer this to repeated agent_status polling; it does not send guidance to the running task.',
+  inputSchema: { session_id: sessionId, wait_ms: z.number().int().min(1).max(MAX_AGENT_WAIT_MS).optional() },
   annotations: { ...annotations, readOnlyHint: true, idempotentHint: true },
 }, ({ session_id, wait_ms }) => call(async () => {
   const id = await resolveId(session_id);

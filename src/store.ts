@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { EstimatedCost } from './pricing.js';
+import { MAX_AGENT_WAIT_MS } from './wait-policy.js';
 
 export type ApiItem = Record<string, any>;
 export type Message = {
@@ -166,7 +167,7 @@ export class Store extends EventEmitter {
     if (s.status !== 'running' || startedAt === undefined)
       return { waitMs: 0, elapsedMs: 0, sampleSize: 0, source: 'not_running' };
     const elapsedMs = Math.max(0, Date.now() - startedAt);
-    const maxWaitMs = 55_000;
+    const maxWaitMs = MAX_AGENT_WAIT_MS;
     try {
       const file = path.join(this.dir, 'metrics', 'agent-runs.jsonl');
       if (!fs.existsSync(file)) return { waitMs: maxWaitMs, elapsedMs, sampleSize: 0, source: 'fallback' };

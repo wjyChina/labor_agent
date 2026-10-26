@@ -14,6 +14,7 @@ import { HolidayCalendar } from './holiday-calendar.js';
 import { ExchangeRateCache } from './exchange-rate.js';
 import { beijingDate } from './pricing.js';
 import { baseUrl, serviceId, mcpToken } from './service.js';
+import { MAX_AGENT_WAIT_MS } from './wait-policy.js';
 
 const config = loadConfig();
 fs.mkdirSync(config.dataDir, { recursive: true });
@@ -222,7 +223,7 @@ app.post('/api/pricing/holiday-override', (req, res) => {
 app.get('/api/sessions', (_req, res) => { res.json({ activeSessionId: store.activeSessionId, sessions: store.list() }); });
 app.get('/api/sessions/:id', (req, res) => { res.json(store.view(store.get(req.params.id))); });
 app.get('/api/sessions/:id/wait', async (req, res) => {
-  const { wait_ms } = z.object({ wait_ms: z.coerce.number().int().min(0).max(55000).optional() })
+  const { wait_ms } = z.object({ wait_ms: z.coerce.number().int().min(0).max(MAX_AGENT_WAIT_MS).optional() })
     .parse({ wait_ms: req.query.wait_ms });
   const id = req.params.id;
   const startedAt = Date.now();
@@ -286,7 +287,7 @@ app.post('/api/sessions/:id/rename', async (req, res) => {
 });
 app.post('/api/sessions/:id/send', async (req, res) => {
   const { text, source, wait_ms } = z.object({ text: z.string().min(1).max(100000),
-    source: z.enum(['web', 'mcp']).default('web'), wait_ms: z.number().int().min(0).max(55000).optional() }).parse(req.body);
+    source: z.enum(['web', 'mcp']).default('web'), wait_ms: z.number().int().min(0).max(MAX_AGENT_WAIT_MS).optional() }).parse(req.body);
   const session = store.get(req.params.id);
   const runner = runnerFor(session);
   let waitPolicy: ReturnType<typeof store.adaptiveWait> | undefined;

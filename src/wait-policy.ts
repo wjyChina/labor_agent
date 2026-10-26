@@ -1,0 +1,2 @@
+export const MAX_AGENT_WAIT_MS = 30 * 60 * 1000;
+export const MCP_WAIT_HTTP_TIMEOUT_MS = MAX_AGENT_WAIT_MS + 10_000;

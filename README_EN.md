@@ -68,7 +68,7 @@ npm run setup:mcp
 npm run setup:skill
 ```
 
-- `setup:mcp` writes this project's `.codex/config.toml` with absolute paths to Node and `dist/mcp.js`. Reopen/reload the trusted project or client session to load the tools. Other projects need their own project/client configuration.
+- `setup:mcp` writes or updates this project's `.codex/config.toml` with absolute paths to Node and `dist/mcp.js`, and sets the MCP tool timeout to 1,860 seconds (30-minute wait plus a 1-minute margin). Reopen/reload the trusted project or client session to load the tools. Other projects need their own project/client configuration.
 - `setup:skill` installs into `$CODEX_HOME/skills/labor-agent`, or `~/.codex/skills/labor-agent` when unset. Reopen the session if its skill list has not refreshed. To replace a differing installed version, run `npm run setup:skill -- --update`; this overwrites the installed skill.
 - MCP supplies the executable tools; the skill guides planning, delegation and acceptance. The first MCP call can start the backend automatically, so a separate manual start is optional.
 
@@ -99,7 +99,7 @@ MCP tools: `agent_start`, `session_create/list/select/get`, and `agent_send/stat
 
 `session_get` returns recent messages with short tool-output and argument previews, bounded by a character budget. To inspect a specific result, pass its message `id` in `message_ids` to fetch the full text; increase `max_chars` when `textTruncated` is true. Filter with `roles` or page backward with `before_message_id`. Full tool arguments require `include_tool_args: true`. `agent_send` and `agent_status` also return compact tool previews.
 
-To reduce primary-model polling, omit `wait_ms` from `agent_send` and `agent_wait` to use an adaptive wait based on recent completed-run P80. It prefers up to 100 runs matching the backend, provider and model, then falls back to runs for the same backend; at least five samples are needed, otherwise it uses 55 seconds. Each wait is capped at 55 seconds; after the P80 estimate is exceeded, subsequent waits use the full 55 seconds. The service listens for state changes and returns immediately when the run ends, errors or is cancelled. Run timing history is stored in `.labor-agent/metrics/agent-runs.jsonl`. Do not send “continue” or “wait” through `agent_send`: while a task is running, that call queues guidance.
+To reduce primary-model polling, omit `wait_ms` from `agent_send` and `agent_wait` to use an adaptive wait based on recent completed-run P80. It prefers up to 100 runs matching the backend, provider and model, then falls back to runs for the same backend; at least five samples are needed, otherwise it waits up to 30 minutes. Each wait is capped at 30 minutes; after the P80 estimate is exceeded, subsequent waits use the full 30 minutes. The service listens for state changes and returns immediately when the run ends, errors or is cancelled, so it does not wait for the entire timeout after completion. Run timing history is stored in `.labor-agent/metrics/agent-runs.jsonl`. Do not send “continue” or “wait” through `agent_send`: while a task is running, that call queues guidance.
 
 ## Execution boundaries and development
 
