@@ -4,11 +4,12 @@ import { toolDefinitions } from './tools.js';
 import { createChatCompletion } from './chat-completions.js';
 
 export type ModelResponse = { id?: string; status?: string; output: ApiItem[]; usage?: any; error?: any; incomplete_details?: any; service_tier?: string };
+export type ProviderRequestOptions = { tools?: ApiItem[]; maxOutputTokens?: number; compression?: boolean };
 // No tokenizer is bundled because gateways may use different model tokenizers.
 // This deliberately conservative estimate is used only before a request; the
 // provider's input_tokens value is recorded after each successful response.
-export function estimateRequestTokens(input: ApiItem[], instructions: string, reservedOutputTokens: number) {
-  const payload = JSON.stringify({ instructions, input, tools: toolDefinitions });
+export function estimateRequestTokens(input: ApiItem[], instructions: string, reservedOutputTokens: number, tools: ApiItem[] = toolDefinitions) {
+  const payload = JSON.stringify({ instructions, input, tools });
   let ascii = 0, nonAscii = 0;
   for (const char of payload) (char.codePointAt(0)! <= 0x7f ? ascii++ : nonAscii++);
   const estimatedInputTokens = Math.ceil(ascii / 3 + nonAscii / 1.5);
@@ -20,11 +21,13 @@ export class ProviderError extends Error {
 export class ResponsesProvider {
   constructor(private config: Config) {}
   async create(input: ApiItem[], instructions: string, previousId: string | undefined,
-    signal: AbortSignal, onDelta: (text: string) => void): Promise<ModelResponse> {
-    const c = this.config;
+    signal: AbortSignal, onDelta: (text: string) => void, options: ProviderRequestOptions = {}): Promise<ModelResponse> {
+    const c = { ...this.config, ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
+      ...(options.compression ? { cacheMode: 'local' as const, reasoningEffort: 'none' as const } : {}) };
+    const tools = options.tools ?? toolDefinitions;
     if (!c.apiKey) throw new ProviderError('尚未配置 API Key。请在左下角设置中填写。', 400);
-    if (c.apiFormat === 'chat_completions') return createChatCompletion(c, input, instructions, signal, onDelta);
-    const body = { model: c.model, instructions, input, tools: toolDefinitions, tool_choice: 'auto',
+    if (c.apiFormat === 'chat_completions') return createChatCompletion(c, input, instructions, signal, onDelta, tools);
+    const body = { model: c.model, instructions, input, ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
       stream: true, max_output_tokens: c.maxOutputTokens, reasoning: { effort: c.reasoningEffort },
       ...(c.cacheMode === 'previous_response_id' ? { store: true, ...(previousId ? { previous_response_id: previousId } : {}) } : {}),
     };

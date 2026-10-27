@@ -78,6 +78,25 @@
       <p class="field-hint">完整权限允许 Codex 访问本机文件和执行命令；项目写入模式会限制在当前项目目录。</p>
       <div class="dialog-actions provider-actions"><button class="primary" id="codex-use" type="button">保存并使用 Codex</button></div>
     </section>
+    <section class="provider-settings" id="context-settings">
+      <label class="field-label" for="context-scope">上下文设置范围</label>
+      <select class="field-input" id="context-scope"><option value="global">全局默认（含继承默认的已有会话）</option><option value="session">仅当前会话</option></select>
+      <label class="field-label" for="context-mode">上下文模式</label>
+      <select class="field-input" id="context-mode"><option value="handoff">不压缩 · 达到预算后由主 agent 换会话</option><option value="compress">自动压缩 · 在同一会话中继续</option></select>
+      <label class="field-label" for="context-strategy">压缩策略</label>
+      <select class="field-input" id="context-strategy"><option value="long">长上下文（默认，保留更多细节和近期原文）</option><option value="short">短上下文（更早压缩，摘要更紧凑）</option></select>
+      <div class="context-config-grid">
+        <div><label class="field-label" for="context-trigger">触发压缩的上下文用量（%）</label><input class="field-input" id="context-trigger" type="number" min="10" max="95" step="0.1"></div>
+        <div><label class="field-label" for="context-recent-tokens">近期原文目标（tokens）</label><input class="field-input" id="context-recent-tokens" type="number" min="256" step="1"></div>
+        <div><label class="field-label" for="context-recent-messages">最少保留历史条目</label><input class="field-input" id="context-recent-messages" type="number" min="1" max="100" step="1"></div>
+        <div><label class="field-label" for="context-summary-tokens">摘要输出预算（tokens）</label><input class="field-input" id="context-summary-tokens" type="number" min="256" step="1"></div>
+      </div>
+      <p class="field-hint">留空使用所选策略的默认值，自定义值在切换长／短策略后仍保留。原文保留量为目标，完整工具批次及最近用户要求会额外保护。</p>
+      <p class="field-hint" id="context-effective-config"></p>
+      <p class="field-hint" id="context-help">适用于 API 渠道。执行中修改会在下一次模型调用边界生效；已有摘要与可恢复原文会保留。Codex 订阅的上下文由 Codex CLI 管理。</p>
+      <p class="field-hint">上下文压缩参考 <a href="https://github.com/ranxianglei/billion-context" target="_blank" rel="noopener noreferrer">billion-context</a> / <a href="https://github.com/ranxianglei/acp-kernel" target="_blank" rel="noopener noreferrer">acp-kernel</a>。</p>
+      <div class="dialog-actions provider-actions context-actions"><button class="secondary-button" id="context-inherit" type="button">恢复继承默认</button><button class="secondary-button" id="context-reset-config" type="button">恢复策略默认参数</button><button class="primary" id="context-save" type="button">保存上下文设置</button></div>
+    </section>
     <p class="field-error hidden" id="settings-error"></p>
     <dl id="settings-info"></dl>
     <p class="settings-note">配置文件保存在本机 <code>.labor-agent</code> 目录，API Key 不会发送到浏览器以外的页面。Bash 仍以当前系统用户权限执行。</p>
@@ -96,6 +115,6 @@
       <div class="dialog-actions"><button class="secondary-button" type="button" data-close="new-session-dialog">取消</button><button class="primary" id="create-session" type="submit">创建</button></div>
     </form>
   </dialog>
-  <div class="toast hidden" id="toast" role="alert"></div>
+  <div class="toast hidden" id="toast" role="status" aria-atomic="true"></div>
 </body>
 </html>

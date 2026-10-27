@@ -31,7 +31,8 @@ test('MCP auto-starts backend and shares sessions/transcripts with HTTP UI, reje
   const env = Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === 'string'));
   const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(f.config.projectRoot, 'dist/mcp.js')],
     cwd: f.workspace, stderr: 'pipe', env: { ...env, LABOR_API_KEY: f.config.apiKey, LABOR_BASE_URL: mock.url,
-      LABOR_WORKSPACE: f.workspace, LABOR_DATA_DIR: f.dataDir, LABOR_PORT: String(port), LABOR_REASONING_EFFORT: 'none' } });
+      LABOR_WORKSPACE: f.workspace, LABOR_DATA_DIR: f.dataDir, LABOR_PORT: String(port), LABOR_REASONING_EFFORT: 'none',
+      LABOR_CODEX_COMMAND: path.join(f.dir, 'not-installed-codex') } });
   const client = new Client({ name: 'labor-test', version: '1.0.0' }); let pid: number | undefined;
   const tool = async (name: string, args = {}) => {
     const result = await client.callTool({ name, arguments: args });
@@ -39,11 +40,37 @@ test('MCP auto-starts backend and shares sessions/transcripts with HTTP UI, reje
   };
   try {
     await client.connect(transport);
-    const list = await client.listTools(); assert.equal(list.tools.length, 9);
+    const list = await client.listTools(); assert.equal(list.tools.length, 10);
     assert.ok(list.tools.some(tool => tool.name === 'agent_wait'));
     const start = await tool('agent_start'); pid = start.pid; assert.equal(start.configured, true);
     const a = await tool('session_create', { title: 'MCP 测试' });
     const b = await tool('session_create', { title: '第二会话' });
+    assert.equal((await tool('context_policy')).defaults.mode, 'handoff');
+    await tool('context_policy', { mode: 'compress' });
+    assert.equal((await tool('context_policy', { session_id: a.id })).effective.strategy, 'long');
+    const configured = await tool('context_policy', { config: { triggerRatio: 0.7, preserveRecentTokens: 12000,
+      preserveRecentMessages: 4, summaryMaxTokens: 4096 } });
+    assert.equal(configured.resolved.triggerRatio, 0.7); assert.equal(configured.resolved.summaryMaxTokens, 4096);
+    const settings = await (await fetch(`http://127.0.0.1:${port}/api/settings`)).json() as any;
+    assert.equal(settings.contextSettings.global.effective.config.preserveRecentMessages, 4);
+    assert.equal(settings.contextSettings.global.presets.long.triggerRatio, 0.75);
+    assert.ok(settings.contextSettings.global.limits.maxOutputTokens >= 4096);
+    await tool('context_policy', { session_id: b.id, mode: 'compress', strategy: 'short' });
+    await tool('context_policy', { session_id: b.id, config: { triggerRatio: 0.6, summaryMaxTokens: 1024 } });
+    const policyResponse = await fetch(`http://127.0.0.1:${port}/api/context-policy?session_id=${b.id}`);
+    const policyBody = await policyResponse.json() as any;
+    assert.equal(policyBody.effective.strategy, 'short'); assert.equal(policyBody.resolved.summaryMaxTokens, 1024);
+    assert.equal((await tool('context_policy')).resolved.triggerRatio, 0.7);
+    const invalid = await fetch(`http://127.0.0.1:${port}/api/context-policy`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: { triggerRatio: 0.95 } }) });
+    assert.equal(invalid.status, 400); assert.equal((await tool('context_policy')).resolved.triggerRatio, 0.7);
+    const resetOne = await tool('context_policy', { session_id: b.id, config: { triggerRatio: null } });
+    assert.equal(resetOne.resolved.triggerRatio, 0.45); assert.equal(resetOne.resolved.summaryMaxTokens, 1024);
+    await tool('context_policy', { session_id: b.id, inherit: true });
+    assert.equal((await tool('context_policy', { session_id: b.id })).inherited, true);
+    assert.equal((await tool('context_policy', { session_id: b.id })).resolved.summaryMaxTokens, 4096);
+    assert.equal((await tool('context_policy', { config: null })).resolved.triggerRatio, 0.75);
+    await tool('context_policy', { mode: 'handoff' });
     await tool('session_select', { session_id: a.id });
     const task = '请创建 proof.txt。验收标准：内容为 alpha，提供实际读取的证据。请自主执行。';
     const sent = await tool('agent_send', { session_id: a.id, text: task, wait_ms: 5000 });
@@ -90,7 +117,13 @@ test('MCP auto-starts backend and shares sessions/transcripts with HTTP UI, reje
     await tool('agent_cancel');
   } finally {
     releaseSteering();
+    const mcpPid = transport.pid;
     await client.close();
+    // The SDK's forced-close path can return before the process exits on
+    // Windows. Its cwd is this fixture: await release before deleting it.
+    if (mcpPid) for (let n = 0; n < 60; n++) {
+      try { process.kill(mcpPid, 0); await new Promise(resolve => setTimeout(resolve, 50)); } catch { break; }
+    }
     // This process was created by this test, and its private data directory identifies it.
     if (pid) {
       const lock = JSON.parse(fs.readFileSync(path.join(f.dataDir, 'server.lock'), 'utf8'));

@@ -31,7 +31,10 @@
 - Responses API、本地完整历史续传、每个 session 的缓存命中量与命中率展示；支持可配置 API Key、URL 和模型。
 - 按 session 展示 DeepSeek Flash 的人民币费用估算：先按请求时段累计美元费用，再按每日更新的 [USD/CNY 中间汇率](https://frankfurter.dev/)折算；汇率变化时历史 session 的人民币金额也会更新。节假日从 [Hi8 节假日 API](https://hi8.com/t/jiejiari-api) 启动时同步并每日更新到本地缓存，失败时保留旧数据，网页可手动标记。其他模型及缺少分时记录的旧用量不估价。
 - Labor Agent 服务启动时自动打开默认浏览器。AI 与 Labor Agent 的日常协作使用 MCP 工具，不由 AI 打开或操作网页；用户仍可直接在网页中查看和手动操作。无浏览器环境仍可通过 MCP 工具使用服务。
-- 服务会在模型请求前估算 session 上下文预算；达到配置阈值时会拦截本轮请求并提示 AI 创建新的 session，避免先请求再收到上下文超限错误。
+- 上下文可选“不压缩，主 agent 换会话”或“自动压缩，同一会话继续”。自动压缩默认长上下文策略，也可选更紧凑的短上下文；用户可在监控页面设置，或让 AI 调用 MCP `context_policy` 设置全局/单会话策略。已有安装默认保持不压缩；API 引擎支持此功能，Codex 订阅由 CLI 管理上下文。[详细行为与设置](README.md#上下文和缓存)。
+- 压缩触发百分比、近期原文目标 token 数、最少保留条目和摘要输出预算也可通过页面或 `context_policy.config` 修改，支持恢复策略默认、全局和单会话设置；参数会保存并在执行中下一次模型调用边界生效。
+
+上下文压缩参考并使用 [billion-context](https://github.com/ranxianglei/billion-context) / [acp-kernel](https://github.com/ranxianglei/acp-kernel) 的增量范围摘要与分层提炼方法，只移植压缩和原文恢复；许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 - 网页会渲染用户和 Agent 回复中的常用 Markdown，包括标题、列表、链接、引用、表格和代码块；工具结果保持纯文本展示。
 - 左下角“执行账号与模型”可以统一切换 DeepSeek API 或 Codex 订阅；DeepSeek 的 API 地址、模型、Key 可保存多个配置，Codex 账号和模型也在这里选择。新建 session 只选择项目文件夹，并自动继承当前全局执行设置。
 - 网页左侧“＋”可以新建 session 并选择项目文件夹；目录会作为 workspace 保存。使用 Codex 全局设置时，该目录会作为 Codex thread 的 `cwd`，便于 Codex 按项目展示。

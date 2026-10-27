@@ -42,7 +42,10 @@ description: 与 Labor Agent/labor_agent 协作时，仅委派适合的复杂代
 - 默认一个 session 对应一个任务或有明确交付的阶段。同一任务的补充、验收修正、取消后恢复沿用原会话；任务或阶段已验收完成后，即使仍在同一项目，也用 `session_create` 新建会话执行下一个任务，明确传目标项目的 `workspace`。不要把不同 Phase 持续追加到一个长 session，也不要仅因收到一条新消息就切换。
 - 新 session 只交接目标、关键约束、验收标准、必要成果/计划路径和未完成事项，通常几百字；优先引用现有文档，避免复制完整对话、已完成阶段的日志或大表格。按需查 `session_list`/`session_get` 恢复尚未完成的任务；不要为了交接先读完整历史。网页不提供会话创建，不要求用户在网页点“新建会话”。
 - 记录返回的会话 ID，后续 `agent_send`、`agent_status`、`agent_wait`、`session_get`、`agent_cancel` 都显式传 `session_id`，不要依赖全局活动会话。普通任务不调用 `session_select` 来同步网页；只有用户明确要求切换界面当前会话时才调用它。
-- session 元数据包含 `contextBudget`。如果 `agent_send` 因上下文预算达到阈值而返回预警，停止重试原 session；用相同 `workspace` 调用 `session_create`，把目标、验收标准和未完成事项交接到新 session。
+- session 元数据包含 `contextBudget`、`contextPolicy`、`contextCompression`。用户可用自然语言要求你切换上下文模式：通过 MCP `context_policy(mode: "compress", strategy: "long")` 设置全局自动压缩；`long` 为默认策略，`short` 更早、更紧凑地压缩；`mode: "handoff"` 恢复不压缩。传 `session_id` 仅设置该会话；`inherit: true` 配合 `session_id` 恢复继承全局。无模式参数时读取设置。监控页面“设置 → 上下文模式”提供相同操作，保存后在下一次模型调用边界生效。
+- 压缩参数也通过 `context_policy` 的 `config` 读取或修改：`triggerRatio` 为触发比例（例如用户说 70% 时传 `0.7`），`preserveRecentTokens` 为近期原文目标 token 数，`preserveRecentMessages` 为最少保留历史条目数，`summaryMaxTokens` 为摘要输出预算。例如 `{config: {triggerRatio: 0.7, summaryMaxTokens: 4096}}` 只改这两项；省略的参数保留原设置，单项传 `null` 恢复该项策略默认，`config: null` 恢复全部压缩参数默认。先读取返回的 `resolved`、`presets` 和 `limits`，按用户要求设置，并以返回的生效值确认结果。自定义参数优先于长/短策略默认值，切换策略时保留；页面支持相同配置和恢复操作。
+- **不压缩模式**：如果 `agent_send` 因上下文预算达到阈值而返回预警，停止重试原 session；用相同 `workspace` 调用 `session_create`，把目标、验收标准和未完成事项交接到新 session。
+- **自动压缩模式**：Labor 会压缩已消化的历史、保留近期原文及原始历史归档，并在同一 session 继续。不要仅因上下文增长或正在压缩就新建会话；继续用 `agent_wait` 等待。同一任务持续沿用原 session。压缩失败时检查错误和现有产物，修正压缩配置/输入后继续原会话，不自动改为新会话交接。此设置适用于 API 引擎，Codex 订阅引擎由 Codex CLI 管理上下文。
 
 ## 用对话派发和跟进
 

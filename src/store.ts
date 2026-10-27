@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { EstimatedCost } from './pricing.js';
 import { MAX_AGENT_WAIT_MS } from './wait-policy.js';
+import { defaultContextPolicy, validContextPolicy, type ContextPolicy } from './context-policy.js';
 
 export type ApiItem = Record<string, any>;
 export type Message = {
@@ -26,6 +27,7 @@ export type ModelRequestMetric = {
   startedAt: string; completedAt: string; durationMs: number;
   model: string; providerId?: string; apiFormat?: 'responses' | 'chat_completions';
   requestedServiceTier?: string; actualServiceTier?: string; status: 'success' | 'error';
+  purpose?: 'context_compression';
   responseStatus?: string; errorStatus?: number; inputTokens?: number; outputTokens?: number;
   cachedTokens?: number; reasoningTokens?: number; estimatedCostUsd?: number; timeToFirstTextMs?: number;
 };
@@ -41,6 +43,9 @@ export type Session = {
   messages: Message[]; history: ApiItem[]; previousResponseId?: string;
   responseCursor?: number; providerKey?: string; error?: string;
   contextBudget?: ContextBudget;
+  contextPolicy?: ContextPolicy;
+  contextCompression?: { count: number; status: 'idle' | 'compressing'; lastArchiveId?: string;
+    lastCompressedAt?: string; beforeTokens?: number; afterTokens?: number; tier?: number };
   backend?: 'deepseek' | 'codex'; providerId?: string; model?: string; codex?: CodexBinding;
   usage: { input: number; output: number; cached: number; lastServiceTier?: string; estimatedCosts?: Record<string, EstimatedCost>;
     providerEstimate?: { usd: number; input: number; output: number; cached: number; calls: number } };
@@ -65,6 +70,7 @@ export class Store extends EventEmitter {
   activeSessionId: string | null = null;
   holidayOverrideDate: string | null = null;
   executionDefaults: ExecutionDefaults = { backend: 'deepseek', codexSandbox: 'danger-full-access' };
+  contextPolicy: ContextPolicy = { ...defaultContextPolicy };
   constructor(public dir: string) {
     super();
     fs.mkdirSync(path.join(dir, 'sessions'), { recursive: true });
@@ -73,6 +79,8 @@ export class Store extends EventEmitter {
       const s: Session = JSON.parse(fs.readFileSync(path.join(dir, 'sessions', name), 'utf8'));
       if (!s.id || !Array.isArray(s.history) || !Array.isArray(s.messages))
         throw new Error(`损坏的会话文件：${name}`);
+      if (s.contextPolicy && !validContextPolicy(s.contextPolicy)) throw new Error(`损坏的会话上下文模式：${name}`);
+      if (s.contextCompression?.status === 'compressing') s.contextCompression.status = 'idle';
       if (s.status === 'running') {
         s.status = 'error'; s.error = '服务重启中断了上一轮。可以发送新消息继续。';
         // Repair outstanding calls so a resumed stateless request stays valid.
@@ -89,6 +97,7 @@ export class Store extends EventEmitter {
     if (fs.existsSync(state)) {
       const saved = JSON.parse(fs.readFileSync(state, 'utf8'));
       this.activeSessionId = saved.activeSessionId;
+      if (validContextPolicy(saved.contextPolicy)) this.contextPolicy = saved.contextPolicy;
       if (saved.executionDefaults?.backend === 'deepseek' || saved.executionDefaults?.backend === 'codex')
         this.executionDefaults = { ...this.executionDefaults, ...saved.executionDefaults };
       if (typeof saved.holidayOverrideDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(saved.holidayOverrideDate))
@@ -130,10 +139,20 @@ export class Store extends EventEmitter {
       ...(value.backend === 'codex' ? { codexSandbox: value.codexSandbox || this.executionDefaults.codexSandbox || 'danger-full-access' } : {}) };
     this.saveState(); this.emit('change', {});
   }
+  contextPolicyFor(s: Session): ContextPolicy { return s.contextPolicy || this.contextPolicy; }
+  setContextPolicy(value: ContextPolicy, s?: Session) {
+    if (!validContextPolicy(value)) throw new AppError('无效的上下文模式。');
+    if (s) {
+      if (s.backend === 'codex') throw new AppError('此上下文模式适用于 API 引擎；Codex 上下文由 Codex CLI 管理。');
+      s.contextPolicy = structuredClone(value); this.save(s);
+    } else { this.contextPolicy = structuredClone(value); this.saveState(); this.emit('change', {}); }
+  }
+  inheritContextPolicy(s: Session) { delete s.contextPolicy; this.save(s); }
   private saveState() {
     atomicWrite(path.join(this.dir, 'state.json'), JSON.stringify({
       activeSessionId: this.activeSessionId, holidayOverrideDate: this.holidayOverrideDate,
       executionDefaults: this.executionDefaults,
+      contextPolicy: this.contextPolicy,
     }));
   }
   save(s: Session) {
@@ -200,13 +219,17 @@ export class Store extends EventEmitter {
   }
   list() {
     return [...this.sessions.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      .map(({ id, title, workspace, createdAt, updatedAt, status, usage, contextBudget, backend, providerId, model, codex }) =>
-        ({ id, title, workspace, createdAt, updatedAt, status, usage, contextBudget, backend: backend || 'deepseek', providerId, model,
-          ...(codex ? { codex: { profileId: codex.profileId, model: codex.model, sandbox: codex.sandbox, threadId: codex.threadId } } : {}) }));
+      .map(s => {
+        const { id, title, workspace, createdAt, updatedAt, status, usage, contextBudget, backend, providerId, model, codex, contextCompression } = s;
+        return { id, title, workspace, createdAt, updatedAt, status, usage, contextBudget, backend: backend || 'deepseek', providerId, model,
+          contextPolicy: this.contextPolicyFor(s), contextPolicyInherited: !s.contextPolicy, contextCompression,
+          ...(codex ? { codex: { profileId: codex.profileId, model: codex.model, sandbox: codex.sandbox, threadId: codex.threadId } } : {}) };
+      });
   }
   view(s: Session) {
     const { history, providerKey, responseCursor, codex, ...visible } = s;
     return { ...visible, historyItems: history.length,
+      contextPolicy: this.contextPolicyFor(s), contextPolicyInherited: !s.contextPolicy,
       backend: s.backend || 'deepseek',
       ...(codex ? { codex: { profileId: codex.profileId, model: codex.model, sandbox: codex.sandbox, threadId: codex.threadId } } : {}),
       pendingGuidance: s.messages.filter(m => m.kind === 'guidance' && m.delivery === 'queued').length };

@@ -38,12 +38,12 @@ export function chatMessages(input: ApiItem[], instructions: string): ApiItem[] 
 }
 
 export async function createChatCompletion(c: Config, input: ApiItem[], instructions: string,
-  signal: AbortSignal, onDelta: (text: string) => void): Promise<ModelResponse> {
+  signal: AbortSignal, onDelta: (text: string) => void, tools: ApiItem[] = toolDefinitions): Promise<ModelResponse> {
   const url = /\/chat\/completions$/.test(c.baseUrl) ? c.baseUrl : `${c.baseUrl}/chat/completions`;
   const response = await fetch(url, {
     method: 'POST', headers: { Authorization: `Bearer ${c.apiKey}`, 'Content-Type': 'application/json', Accept: 'text/event-stream' },
     body: JSON.stringify({ model: c.model, messages: chatMessages(input, instructions),
-      tools: toolDefinitions.map(({ type, ...fn }) => ({ type, function: fn })), tool_choice: 'auto',
+      ...(tools.length ? { tools: tools.map(({ type, ...fn }) => ({ type, function: fn })), tool_choice: 'auto' } : {}),
       stream: true, stream_options: { include_usage: true }, max_tokens: c.maxOutputTokens,
       reasoning_effort: c.reasoningEffort, service_tier: c.serviceTier || 'default' }),
     signal: AbortSignal.any([signal, AbortSignal.timeout(c.requestTimeout)]),

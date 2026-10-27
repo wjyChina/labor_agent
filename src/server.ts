@@ -15,6 +15,7 @@ import { ExchangeRateCache } from './exchange-rate.js';
 import { beijingDate } from './pricing.js';
 import { baseUrl, serviceId, mcpToken } from './service.js';
 import { MAX_AGENT_WAIT_MS } from './wait-policy.js';
+import { compressionConfigPatchSchema, resolveCompressionConfig, updateContextPolicy, validateCompressionConfig } from './context-policy.js';
 
 const config = loadConfig();
 fs.mkdirSync(config.dataDir, { recursive: true });
@@ -157,6 +158,7 @@ const status = () => {
     url: origin, configured, model, baseUrl, activeProvider,
     workspace: config.workspace, cacheMode, bashPath: agent.tools.bashPath,
     contextLimitTokens: config.contextLimitTokens, contextWarnRatio: config.contextWarnRatio,
+    contextPolicy: store.contextPolicy,
     activeSessionId: store.activeSessionId, running: store.list().filter(s => s.status === 'running').length,
     executionDefaults: store.executionDefaults,
     holidayCalendar: { ...calendar, automaticHoliday: calendar.isHoliday, manualOverride,
@@ -260,7 +262,52 @@ app.get('/api/stats/tokens', (req, res) => {
 app.get('/api/settings', async (_req, res) => {
   const snapshot = codexAccounts.snapshot();
   await Promise.all(snapshot.profiles.map(profile => codexAccounts.refresh(profile.id).catch(() => undefined)));
-  res.json({ executionDefaults: store.executionDefaults, providers: providerProfiles.snapshot(), codex: codexAccounts.snapshot() });
+  res.json({ executionDefaults: store.executionDefaults, contextPolicy: store.contextPolicy,
+    contextSettings: { global: contextPolicySnapshot(), session: store.activeSessionId ? contextPolicySnapshot(store.activeSessionId) : null },
+    providers: providerProfiles.snapshot(), codex: codexAccounts.snapshot() });
+});
+const contextPolicySchema = z.object({ mode: z.enum(['handoff', 'compress']).optional(),
+  strategy: z.enum(['long', 'short']).optional(), config: compressionConfigPatchSchema.nullable().optional(),
+  session_id: z.string().uuid().optional(), inherit: z.boolean().optional() }).strict();
+function contextRuntime(session?: ReturnType<Store['get']>) {
+  try {
+    if (session) return session.backend !== 'codex' && session.providerId ? providerProfiles.configFor(session.providerId) : config;
+    if (store.executionDefaults.backend === 'deepseek') return providerProfiles.configFor();
+  } catch { /* Deleted or legacy profiles retain the environment's limits. */ }
+  return config;
+}
+function contextPolicySnapshot(sessionId?: string) {
+  const session = sessionId ? store.get(sessionId) : undefined;
+  const runtime = contextRuntime(session), policy = session ? store.contextPolicyFor(session) : store.contextPolicy;
+  return { defaults: store.contextPolicy, effective: policy, resolved: resolveCompressionConfig(policy, runtime),
+    limits: { contextLimitTokens: runtime.contextLimitTokens, contextWarnRatio: runtime.contextWarnRatio, maxOutputTokens: runtime.maxOutputTokens },
+    presets: { long: resolveCompressionConfig({ mode: 'compress', strategy: 'long' }, runtime),
+      short: resolveCompressionConfig({ mode: 'compress', strategy: 'short' }, runtime) },
+    ...(session ? { sessionId: session.id, inherited: !session.contextPolicy,
+    supported: session.backend !== 'codex', compression: session.contextCompression } : {}) };
+}
+app.get('/api/context-policy', (req, res) => {
+  const { session_id } = contextPolicySchema.pick({ session_id: true }).parse(req.query);
+  res.json(contextPolicySnapshot(session_id));
+});
+app.post('/api/context-policy', (req, res) => {
+  const { mode, strategy, config: configPatch, session_id, inherit } = contextPolicySchema.parse(req.body);
+  const session = session_id ? store.get(session_id) : undefined;
+  if (inherit) {
+    if (!session || mode || strategy || configPatch !== undefined) throw new AppError('恢复默认模式需要指定 session_id，且不能同时设置模式或压缩参数。');
+    store.inheritContextPolicy(session);
+  } else {
+    if (!mode && !strategy && configPatch === undefined) throw new AppError('请指定上下文模式、策略或压缩参数。');
+    const current = session ? store.contextPolicyFor(session) : store.contextPolicy;
+    const policy = updateContextPolicy(current, { mode, strategy, config: configPatch });
+    // Validate newly requested values against this model. Previously saved
+    // values may belong to a different profile and are capped by the resolver.
+    const changedConfig = updateContextPolicy({ mode: policy.mode, strategy: policy.strategy }, { config: configPatch });
+    try { validateCompressionConfig(policy, contextRuntime(session), changedConfig.config || {}); }
+    catch (error) { throw new AppError(error instanceof Error ? error.message : String(error)); }
+    store.setContextPolicy(policy, session);
+  }
+  res.json(contextPolicySnapshot(session_id));
 });
 app.get('/api/providers', (_req, res) => { res.json(providerProfiles.snapshot()); });
 app.post('/api/providers', (req, res) => {

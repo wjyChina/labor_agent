@@ -1,8 +1,32 @@
 const $ = id => document.getElementById(id);
-let state = null, codexState = null, connected = false, sending = false, refreshTimer, toastTimer, rendered = '', sidebarRendered = '', syncedHolidayOverrideKey = '', lastHolidaySyncKey = '', lastHolidaySyncAt = 0, holidaySyncQueue = Promise.resolve();
+let state = null, codexState = null, connected = false, sending = false, refreshTimer, toastTimer, toastHideTimer, rendered = '', sidebarRendered = '', syncedHolidayOverrideKey = '', lastHolidaySyncKey = '', lastHolidaySyncAt = 0, holidaySyncQueue = Promise.resolve();
 const labels = { idle: '待命', running: '执行中', error: '执行异常', cancelled: '已停止' };
 function node(tag, className, text) { const n = document.createElement(tag); if (className) n.className = className; if (text !== undefined) n.textContent = text; return n; }
-function toast(text) { $('toast').textContent = text; $('toast').classList.remove('hidden'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.add('hidden'), 6000); }
+function toast(text, { duration = 6000, success = false } = {}) {
+  const notice = $('toast');
+  clearTimeout(toastTimer); clearTimeout(toastHideTimer);
+  // Native modal dialogs sit above every ordinary z-index. Keep the toast in
+  // the open dialog's top layer so save feedback stays visible over settings.
+  const host = document.querySelector('dialog[open]') || document.body;
+  if (notice.parentElement !== host) host.append(notice);
+  notice.classList.remove('hidden', 'is-visible');
+  notice.classList.toggle('toast-success', success);
+  notice.setAttribute('role', success ? 'status' : 'alert');
+  notice.textContent = text;
+  void notice.offsetWidth;
+  notice.classList.add('is-visible');
+  toastTimer = setTimeout(() => {
+    notice.classList.remove('is-visible');
+    toastHideTimer = setTimeout(() => {
+      notice.classList.add('hidden');
+      if (notice.parentElement !== document.body) document.body.append(notice);
+    }, 350);
+  }, duration);
+}
+function savedToast(text = '保存成功') {
+  $('settings-error').classList.add('hidden');
+  toast(text, { duration: 2200, success: true });
+}
 async function api(url, body) {
   const response = await fetch(url, { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
   const result = await response.json(); if (!response.ok) throw new Error(result.error || '请求失败'); return result;
@@ -71,9 +95,63 @@ function renderSettings() {
   $('deepseek-settings').classList.toggle('hidden', backend !== 'deepseek');
   $('codex-settings').classList.toggle('hidden', backend !== 'codex');
   renderProviderEditor(); renderCodexSettings();
+  renderContextSettings();
   const info = $('settings-info'); info.replaceChildren();
   const current = backend === 'deepseek' ? selectedProvider() : selectedSettingsCodexProfile();
   info.append(node('dt', '', '当前配置'), node('dd', '', current?.label || '—'), node('dt', '', '状态'), node('dd', '', backend === 'deepseek' ? (current?.apiKeyConfigured ? 'API Key 已配置' : '未配置 API Key') : (current?.loggedIn ? 'Codex 已登录' : '未登录')));
+}
+function contextPolicyLabel(policy) {
+  return policy?.mode === 'compress' ? `自动压缩 · ${policy.strategy === 'short' ? '短' : '长'}上下文` : '不压缩 · 主 agent 换会话';
+}
+const contextConfigInputs = { triggerRatio: 'context-trigger', preserveRecentTokens: 'context-recent-tokens',
+  preserveRecentMessages: 'context-recent-messages', summaryMaxTokens: 'context-summary-tokens' };
+function contextSettingsSnapshot() { return settingsState?.contextSettings?.[$('context-scope').value === 'session' ? 'session' : 'global']; }
+function renderContextConfigPreview() {
+  const snapshot = contextSettingsSnapshot(), preset = snapshot?.presets?.[$('context-strategy').value];
+  const enabled = $('context-mode').value === 'compress';
+  for (const [key, id] of Object.entries(contextConfigInputs)) {
+    $(id).disabled = !enabled;
+    $(id).placeholder = String(key === 'triggerRatio' ? Number(((preset?.[key] || 0) * 100).toFixed(1)) : preset?.[key] ?? '');
+  }
+  if (!snapshot || !preset) { $('context-effective-config').textContent = ''; return; }
+  const limits = snapshot.limits;
+  $('context-trigger').max = String(Math.min(95, limits.contextWarnRatio * 100));
+  $('context-recent-tokens').max = String(Math.max(256, limits.contextLimitTokens - limits.maxOutputTokens));
+  $('context-summary-tokens').max = String(limits.maxOutputTokens);
+  const values = Object.fromEntries(Object.entries(contextConfigInputs).map(([key, id]) => [key, $(id).value.trim() === ''
+    ? preset[key] : Number($(id).value) / (key === 'triggerRatio' ? 100 : 1)]));
+  $('context-effective-config').textContent = `${enabled ? '保存后使用' : '启用自动压缩后使用'}：用量 ${Number((values.triggerRatio * 100).toFixed(1))}% 触发，近期原文 ${values.preserveRecentTokens.toLocaleString()} tokens，至少 ${values.preserveRecentMessages} 项，摘要预算 ${values.summaryMaxTokens.toLocaleString()} tokens。当前窗口 ${limits.contextLimitTokens.toLocaleString()} tokens，安全预警 ${Math.round(limits.contextWarnRatio * 100)}%，单次输出上限 ${limits.maxOutputTokens.toLocaleString()} tokens。`;
+}
+function renderContextSettings() {
+  const session = state?.session, scoped = $('context-scope').value === 'session';
+  const snapshot = contextSettingsSnapshot();
+  const policy = snapshot?.effective || { mode: 'handoff', strategy: 'long' };
+  $('context-mode').value = policy.mode; $('context-strategy').value = policy.strategy;
+  $('context-strategy').disabled = policy.mode !== 'compress';
+  $('context-save').disabled = scoped && (!session || session.backend === 'codex');
+  $('context-reset-config').disabled = $('context-save').disabled;
+  $('context-inherit').disabled = !scoped || !session || session.contextPolicyInherited;
+  for (const [key, id] of Object.entries(contextConfigInputs)) $(id).value = policy.config?.[key] === undefined ? ''
+    : key === 'triggerRatio' ? Number((policy.config[key] * 100).toFixed(1)) : policy.config[key];
+  renderContextConfigPreview();
+  $('context-help').textContent = scoped && session?.backend === 'codex'
+    ? '此会话使用 Codex 订阅，上下文由 Codex CLI 管理；此设置适用于 API 渠道。'
+    : `${scoped ? (session?.contextPolicyInherited ? '当前会话正在继承全局默认。' : '当前会话已单独设置。') : '保存后影响新会话及继承默认的已有 API 会话。'}执行中修改在下一次模型调用边界生效；已有摘要和可恢复原文会保留。`;
+}
+async function saveContextSettings(inherit = false, resetConfig = false) {
+  const scoped = $('context-scope').value === 'session';
+  if (scoped && !state?.session) throw new Error('请先选择会话。');
+  if (scoped && contextSettingsSnapshot()?.sessionId !== state.session.id) throw new Error('当前会话已切换，请重新打开设置后保存。');
+  const config = {};
+  if (!inherit && !resetConfig) for (const [key, id] of Object.entries(contextConfigInputs)) {
+    if (!$(id).reportValidity()) throw new Error('请检查压缩参数的取值范围。');
+    config[key] = $(id).value.trim() === '' ? null : Number($(id).value) / (key === 'triggerRatio' ? 100 : 1);
+  }
+  const body = { ...(scoped ? { session_id: state.session.id } : {}), ...(inherit ? { inherit: true }
+    : { mode: $('context-mode').value, strategy: $('context-strategy').value, config: resetConfig ? null : config }) };
+  await api('/api/context-policy', body);
+  savedToast('保存成功：上下文设置已更新');
+  await loadSettings(true); await refresh(); renderContextSettings();
 }
 async function openSettings(preferredBackend) {
   $('settings-error').classList.add('hidden'); $('settings-dialog').showModal();
@@ -89,7 +167,7 @@ async function saveProvider() {
     kind: $('provider-kind').value, apiFormat: $('provider-format').value, serviceTier: $('provider-tier').value,
     ...( $('provider-api-key').value ? { apiKey: $('provider-api-key').value } : {}) };
   const result = await api('/api/providers', body); providerDraftId = result.provider.id; settingsState = await loadSettings(true); await selectExecution('deepseek', providerDraftId, result.provider.model);
-  $('provider-api-key').value = ''; renderSettings(); toast('API 配置已保存并启用。');
+  $('provider-api-key').value = ''; renderSettings(); savedToast('保存成功：API 配置已启用');
 }
 async function loginSettingsCodex() {
   const profile = selectedSettingsCodexProfile(); if (!profile) return;
@@ -110,7 +188,8 @@ async function useCodex() {
   if (!profile?.loggedIn || !model) throw new Error('请先登录 Codex 并选择模型。');
   await api('/api/execution/select', { backend: 'codex', profile_id: profile.id, model,
     codex_sandbox: $('settings-codex-permission').value });
-  settingsState = await loadSettings(true); await refresh(); renderSettings(); toast('Codex 已保存并启用。');
+  savedToast('保存成功：Codex 配置已启用');
+  settingsState = await loadSettings(true); await refresh(); renderSettings();
 }
 async function openNewSessionDialog() {
   $('new-session-error').classList.add('hidden'); $('new-session-title').value = '';
@@ -403,7 +482,7 @@ function render() {
   $('notice').textContent = !connected ? '与本地服务的连接已断开，正在自动重连…' : state.executionDefaults?.backend === 'codex' ? '当前使用 Codex 订阅。可在左下角设置中切换执行账号、模型或 DeepSeek 配置。' : '尚未配置 API Key。请在左下角“执行账号与模型”中保存 DeepSeek API 配置。';
   const queued = s?.pendingGuidance || 0;
   $('run-caption').classList.toggle('hidden', !running && !queued);
-  $('run-caption').replaceChildren(node('span', 'live-dot'), node('span', '', queued ? `${queued} 条引导待应用${running ? '，当前步骤结束后继续' : '，继续对话时处理'}` : '执行中，可以发送引导'));
+  $('run-caption').replaceChildren(node('span', 'live-dot'), node('span', '', s?.contextCompression?.status === 'compressing' ? '正在压缩历史上下文，完成后在当前会话继续' : queued ? `${queued} 条引导待应用${running ? '，当前步骤结束后继续' : '，继续对话时处理'}` : '执行中，可以发送引导'));
   $('send').replaceChildren(document.createTextNode(running ? '引导' : '发送'), node('span', '', '↑'));
   $('stop').classList.toggle('hidden', !running);
   $('send').disabled = sending || !connected || !sessionConfigured || !s;
@@ -413,7 +492,7 @@ function render() {
     const cost = costSummary(s.usage);
     const rate = cacheHitRate(s.usage);
     const budget = contextBudgetSummary(s.contextBudget);
-    $('usage').textContent = `输入 ${s.usage.input.toLocaleString()} · 输出 ${s.usage.output.toLocaleString()} · 缓存命中 ${s.usage.cached.toLocaleString()}（命中率 ${rate}，包含在输入中）tokens · ${cost.label}${budget ? ` · ${budget}` : ''}`;
+    $('usage').textContent = `输入 ${s.usage.input.toLocaleString()} · 输出 ${s.usage.output.toLocaleString()} · 缓存命中 ${s.usage.cached.toLocaleString()}（命中率 ${rate}，包含在输入中）tokens · ${cost.label}${budget ? ` · ${budget}` : ''}${s.backend !== 'codex' ? ` · ${contextPolicyLabel(s.contextPolicy)}${s.contextCompression?.count ? ` · 已压缩 ${s.contextCompression.count} 次` : ''}` : ''}`;
     $('usage').title = `缓存命中率 ${rate} = 缓存命中输入 token ÷ 输入 token。${s.contextBudget ? `\n上下文估算包含历史输入和预留输出：${s.contextBudget.estimatedRequestTokens.toLocaleString()}/${s.contextBudget.limitTokens.toLocaleString()} tokens。` : ''}\n${cost.title}`;
   } else { $('usage').textContent = ''; $('usage').removeAttribute('title'); }
   const listKey = JSON.stringify([state.activeSessionId, state.sessions]);
@@ -475,6 +554,14 @@ $('codex-account').onclick = () => { void openSettings('codex'); };
 $('new-session-form').onsubmit = event => { void createSessionFromDialog(event); };
 $('choose-folder').onclick = () => { void chooseFolder(); };
 $('settings').onclick = () => { void openSettings(); };
+$('context-scope').onchange = renderContextSettings;
+$('context-mode').onchange = () => { $('context-strategy').disabled = $('context-mode').value !== 'compress'; renderContextConfigPreview(); };
+$('context-strategy').onchange = renderContextConfigPreview;
+for (const id of Object.values(contextConfigInputs)) $(id).oninput = renderContextConfigPreview;
+$('context-reset-config').onclick = () => { void saveContextSettings(false, true).catch(error => { $('settings-error').textContent = error.message; $('settings-error').classList.remove('hidden'); }); };
+for (const [id, inherit] of [['context-save', false], ['context-inherit', true]]) $(id).onclick = () => {
+  void saveContextSettings(inherit).catch(error => { $('settings-error').textContent = error.message; $('settings-error').classList.remove('hidden'); });
+};
 $('settings-backend').onchange = () => { if (settingsState) { settingsState.executionDefaults.backend = $('settings-backend').value; renderSettings(); } };
 $('provider-profile').onchange = () => { providerDraftId = $('provider-profile').value; renderProviderEditor(); };
 $('provider-new').onclick = () => { providerDraftId = null; $('provider-profile').value = ''; $('provider-label').value = ''; $('provider-base-url').value = 'https://api.deepseek.com'; $('provider-model').value = 'deepseek-flash'; $('provider-kind').value = 'deepseek'; $('provider-format').value = 'responses'; $('provider-tier').value = 'default'; $('provider-api-key').value = ''; $('provider-api-key').placeholder = '请输入 API Key'; updateProviderControls(); };
